@@ -2,6 +2,9 @@ import typer
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Import our custom modules from the src directory
 # Note: These will show errors in your editor until you create the actual files in src/
@@ -72,18 +75,21 @@ def view_portfolio(
         table.add_column("Live Price", justify="right", style="blue")
         table.add_column("Total Return", justify="right")
 
+        # ... (keep the top part of your view_portfolio command the same) ...
+
         with console.status(
             f"[bold green]Fetching live market data for {acc}...[/bold green]"
         ):
+            total_market_value = 0.0
+
             for ticker, data in holdings.items():
                 shares = data["shares"]
                 avg_price = data["avg_price"]
-
-                # Fetch live price from our new data_client!
                 live_price = data_client.get_current_price(ticker)
 
-                # Calculate profit/loss
                 if live_price > 0:
+                    position_value = shares * live_price
+                    total_market_value += position_value
                     total_return_pct = ((live_price - avg_price) / avg_price) * 100
                     return_str = (
                         f"[green]+{total_return_pct:.2f}%[/green]"
@@ -102,6 +108,16 @@ def view_portfolio(
         console.print("\n")
         console.print(table)
 
+        available_cash = accounts[acc].get("cash", 0.0)
+        total_account_value = total_market_value + available_cash
+
+        console.print(
+            f"[bold]Buying Power (Cash):[/bold] [green]${available_cash:,.2f}[/green]"
+        )
+        console.print(
+            f"[bold]Total Account Value:[/bold] [cyan]${total_account_value:,.2f}[/cyan]\n"
+        )
+
 
 @app.command()
 def add_stock(
@@ -119,6 +135,20 @@ def add_stock(
     )
 
 
+@app.command(name="update-cash")
+def update_cash_cmd(
+    amount: float,
+    account: str = typer.Option(
+        "USD", "--account", "-a", help="Account to update (e.g., USD, CAD)"
+    ),
+):
+    """Update the available buying power (cash) in an account."""
+    portfolio.update_cash(account, amount)
+    console.print(
+        f"[bold green]Successfully updated {account.upper()} buying power to ${amount:,.2f}[/bold green]"
+    )
+
+
 @app.command()
 def analyze():
     """Feature 1: Analyze current holdings against your risk profile."""
@@ -127,12 +157,24 @@ def analyze():
     user_settings = config.load_settings()
     current_portfolio = portfolio.load()
 
-    if not current_portfolio.get("holdings"):
-        console.print("[yellow]Please add stocks to your portfolio first![/yellow]")
+    # --- BUG FIX: Check the new multi-account structure ---
+    accounts = current_portfolio.get("accounts", {})
+    has_assets = False
+    for acc_name, acc_data in accounts.items():
+        if acc_data.get("holdings") or acc_data.get("cash", 0) > 0:
+            has_assets = True
+            break
+
+    if not has_assets:
+        console.print(
+            "[yellow]Please add stocks or cash to your portfolio first![/yellow]"
+        )
         return
 
     # Pass the data to the brain (advisor.py)
-    advice = advisor.evaluate_portfolio(current_portfolio, user_settings)
+    with console.status("[bold cyan]Consulting AI Advisor...[/bold cyan]"):
+        advice = advisor.evaluate_portfolio(current_portfolio, user_settings)
+
     console.print(advice)
 
 

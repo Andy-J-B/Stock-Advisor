@@ -17,13 +17,33 @@ def save(data):
 
 
 def ensure_account_exists(portfolio_data, account_name):
-    """Helper to make sure an account exists before adding to it."""
+    """Helper to make sure an account and its cash balance exist."""
     account_name = account_name.upper()
     if "accounts" not in portfolio_data:
         portfolio_data["accounts"] = {}
     if account_name not in portfolio_data["accounts"]:
-        portfolio_data["accounts"][account_name] = {"holdings": {}}
+        portfolio_data["accounts"][account_name] = {"holdings": {}, "cash": 0.0}
+
+    # Safely upgrade older accounts that don't have a cash key yet
+    if "cash" not in portfolio_data["accounts"][account_name]:
+        portfolio_data["accounts"][account_name]["cash"] = 0.0
+
     return portfolio_data, account_name
+
+
+def update_cash(account: str, amount: float):
+    """Sets the cash balance for a specific account."""
+    portfolio_data = load()
+    portfolio_data, account = ensure_account_exists(portfolio_data, account)
+
+    portfolio_data["accounts"][account]["cash"] = float(amount)
+    save(portfolio_data)
+
+
+def get_cash(account: str) -> float:
+    """Returns the available buying power for an account."""
+    portfolio_data = load()
+    return portfolio_data.get("accounts", {}).get(account.upper(), {}).get("cash", 0.0)
 
 
 def add_position(account: str, ticker: str, shares: float, price: float):

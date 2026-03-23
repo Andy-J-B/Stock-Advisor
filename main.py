@@ -36,12 +36,49 @@ def main_setup(ctx: typer.Context):
 
 
 @app.command()
+def deposit(
+    amount: float,
+    currency: str = typer.Option("USD", "--currency", "-c", help="USD or CAD"),
+):
+    """Deposit cash into your master CAD wallet (auto-converts USD)."""
+    with console.status("[bold green]Processing deposit...[/bold green]"):
+        final_amt, rate = portfolio.deposit_cash(amount, currency)
+
+    if currency.upper() == "USD":
+        console.print(
+            f"[green]Converted ${amount} USD to [bold]${final_amt:,.2f} CAD[/bold] (Rate: {rate:.4f})[/green]"
+        )
+    else:
+        console.print(f"[green]Deposited ${final_amt:,.2f} CAD.[/green]")
+
+
+@app.command()
+def sell_stock(
+    ticker: str,
+    shares: float,
+    price: float,
+    account: str = typer.Option("USD", "--account", "-a"),
+):
+    """Sell stock and convert proceeds to CAD cash."""
+    try:
+        with console.status("[bold red]Processing sale...[/bold red]"):
+            proceeds, rate = portfolio.sell_position(account, ticker, shares, price)
+
+        console.print(f"[bold green]Sold {shares} {ticker}![/bold green]")
+        console.print(
+            f"Proceeds added to CAD cash: [bold]${proceeds:,.2f}[/bold] (FX Rate: {rate:.4f})"
+        )
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+
+@app.command()
 def view_portfolio(
     account: str = typer.Option(
         "ALL", "--account", "-a", help="Specific account to view (e.g., USD, CAD)"
     )
 ):
-    """View your current stock holdings with live market prices and total returns."""
+    """View portfolio with live market prices, currency conversion, and total returns."""
     current_portfolio = portfolio.load()
     accounts = current_portfolio.get("accounts", {})
 
@@ -51,124 +88,131 @@ def view_portfolio(
         )
         return
 
+    # Fetch live FX rate for normalization
+    with console.status("[bold green]Fetching live exchange rates...[/bold green]"):
+        fx_rate = data_client.get_usd_to_cad()
+
     accounts_to_show = (
         [account.upper()] if account.upper() != "ALL" else accounts.keys()
     )
 
-    # Grand totals for the "All Portfolios" summary
-    grand_total_market_value = 0.0
-    grand_total_cost_basis = 0.0
-    grand_total_cash = 0.0
+    # Grand totals (Normalized to CAD)
+    grand_total_value_cad = 0.0
+    grand_total_cost_cad = 0.0
+    grand_total_cash_cad = 0.0
 
-    for acc in accounts_to_show:
-        if acc not in accounts:
-            console.print(f"[red]Account '{acc}' not found.[/red]")
+    for acc_name in accounts_to_show:
+        if acc_name not in accounts:
+            console.print(f"[red]Account '{acc_name}' not found.[/red]")
             continue
 
-        holdings = accounts[acc].get("holdings", {})
-        available_cash = accounts[acc].get("cash", 0.0)
-        grand_total_cash += available_cash
+        holdings = accounts[acc_name].get("holdings", {})
+        cash = accounts[acc_name].get("cash", 0.0)
 
-        if not holdings:
-            console.print(f"\n[bold yellow]--- {acc} Account ---[/bold yellow]")
-            console.print(f"Holdings: Empty. Cash: ${available_cash:,.2f}")
-            continue
+        # Determine multiplier for this account's contribution to global CAD totals
+        multiplier = fx_rate if acc_name == "USD" else 1.0
+        grand_total_cash_cad += cash * multiplier
 
-        table = Table(title=f"{acc} Portfolio")
+        # Build Table for the specific account
+        table = Table(
+            title=f"[bold cyan]{acc_name} Portfolio[/bold cyan] (FX: {multiplier:.4f})"
+        )
         table.add_column("Ticker", style="cyan", no_wrap=True)
-        table.add_column("Shares", justify="right", style="magenta")
+        table.add_column("Shares", justify="right")
         table.add_column("Avg Price", justify="right")
         table.add_column("Live Price", justify="right", style="blue")
         table.add_column("Return %", justify="right")
         table.add_column("Return $", justify="right")
 
-        account_market_value = 0.0
-        account_cost_basis = 0.0
+        acc_cost_basis = 0.0
+        acc_market_value = 0.0
 
-        with console.status(f"[bold green]Fetching data for {acc}...[/bold green]"):
-            for ticker, data in holdings.items():
-                shares = data["shares"]
-                avg_price = data["avg_price"]
-                live_price = data_client.get_current_price(ticker)
+        if not holdings:
+            console.print(f"\n[bold yellow]--- {acc_name} Account ---[/bold yellow]")
+            console.print(f"No holdings. Cash: ${cash:,.2f}")
+        else:
+            with console.status(
+                f"[bold green]Pricing {acc_name} holdings...[/bold green]"
+            ):
+                for ticker, data in holdings.items():
+                    shares = data["shares"]
+                    avg_price = data["avg_price"]
+                    live_price = data_client.get_current_price(ticker)
 
-                cost_basis = shares * avg_price
-                account_cost_basis += cost_basis
+                    # Logic for individual account display
+                    cost = shares * avg_price
+                    acc_cost_basis += cost
 
-                if live_price > 0:
-                    market_val = shares * live_price
-                    account_market_value += market_val
+                    if live_price > 0:
+                        value = shares * live_price
+                        acc_market_value += value
 
-                    diff_dollars = market_val - cost_basis
-                    diff_pct = (diff_dollars / cost_basis) * 100
+                        diff = value - cost
+                        pct = (diff / cost) * 100 if cost > 0 else 0
+                        color = "green" if diff >= 0 else "red"
 
-                    color = "green" if diff_dollars >= 0 else "red"
-                    ret_pct_str = f"[{color}]{diff_pct:+.2f}%[/{color}]"
-                    ret_dol_str = f"[{color}]{diff_dollars:+.2f}[/{color}]"
-                    live_price_str = f"${live_price:.2f}"
-                else:
-                    ret_pct_str = "[yellow]N/A[/yellow]"
-                    ret_dol_str = "[yellow]N/A[/yellow]"
-                    live_price_str = "[yellow]Error[/yellow]"
+                        ret_pct_str = f"[{color}]{pct:+.2f}%[/{color}]"
+                        ret_dol_str = f"[{color}]{diff:+.2f}[/{color}]"
+                        live_price_str = f"${live_price:.2f}"
 
-                table.add_row(
-                    ticker,
-                    str(shares),
-                    f"${avg_price:.2f}",
-                    live_price_str,
-                    ret_pct_str,
-                    ret_dol_str,
-                )
+                        # Add to Grand Totals (Converted to CAD)
+                        grand_total_value_cad += value * multiplier
+                        grand_total_cost_cad += cost * multiplier
+                    else:
+                        ret_pct_str = "[yellow]N/A[/yellow]"
+                        ret_dol_str = "[yellow]N/A[/yellow]"
+                        live_price_str = "[yellow]Error[/yellow]"
 
-        console.print(table)
+                    table.add_row(
+                        ticker,
+                        str(shares),
+                        f"${avg_price:.2f}",
+                        live_price_str,
+                        ret_pct_str,
+                        ret_dol_str,
+                    )
 
-        # Account Summary Calculations
-        acc_total_return_dol = account_market_value - account_cost_basis
-        acc_total_return_pct = (
-            (acc_total_return_dol / account_cost_basis * 100)
-            if account_cost_basis > 0
+            console.print(table)
+
+            # Account-specific summary (Local Currency)
+            acc_ret_dol = acc_market_value - acc_cost_basis
+            acc_ret_pct = (
+                (acc_ret_dol / acc_cost_basis * 100) if acc_cost_basis > 0 else 0
+            )
+            ret_color = "green" if acc_ret_dol >= 0 else "red"
+
+            console.print(
+                f"  [bold]Cash Balance:[/bold]        [white]${cash:,.2f}[/white]"
+            )
+            console.print(
+                f"  [bold]Account Return:[/bold]      [{ret_color}]${acc_ret_dol:,.2f} ({acc_ret_pct:+.2f}%)[/{ret_color}]"
+            )
+            console.print(
+                f"  [bold]Total Account Value:[/bold] [cyan]${(acc_market_value + cash):,.2f}[/cyan]\n"
+            )
+
+    # Global Summary Panel (Always normalized to CAD)
+    if len(accounts_to_show) > 0:
+        global_ret_dol = grand_total_value_cad - grand_total_cost_cad
+        global_ret_pct = (
+            (global_ret_dol / grand_total_cost_cad * 100)
+            if grand_total_cost_cad > 0
             else 0
         )
-
-        # Add to Grand Totals
-        grand_total_market_value += account_market_value
-        grand_total_cost_basis += account_cost_basis
-
-        # Print individual account summary
-        ret_color = "green" if acc_total_return_dol >= 0 else "red"
-        console.print(
-            f"  [bold]Cash Balance:[/bold]        [white]${available_cash:,.2f}[/white]"
-        )
-        console.print(
-            f"  [bold]Account Return:[/bold]      [{ret_color}]${acc_total_return_dol:,.2f} ({acc_total_return_pct:+.2f}%)[/{ret_color}]"
-        )
-        console.print(
-            f"  [bold]Total Account Value:[/bold] [cyan]${(account_market_value + available_cash):,.2f}[/cyan]\n"
-        )
-
-    # Final Global Summary (Only show if viewing ALL or if multiple accounts exist)
-    if len(accounts_to_show) > 1:
-        grand_return_dol = grand_total_market_value - grand_total_cost_basis
-        grand_return_pct = (
-            (grand_return_dol / grand_total_cost_basis * 100)
-            if grand_total_cost_basis > 0
-            else 0
-        )
-        grand_color = "green" if grand_return_dol >= 0 else "red"
+        global_color = "green" if global_ret_dol >= 0 else "red"
+        net_worth = grand_total_value_cad + grand_total_cash_cad
 
         summary_table = Table(
             show_header=False,
             border_style="bright_blue",
-            title="[bold blue]GLOBAL PORTFOLIO SUMMARY[/bold blue]",
+            title="[bold blue]GLOBAL PORTFOLIO SUMMARY (CAD)[/bold blue]",
         )
-        summary_table.add_row("Total Combined Cash", f"${grand_total_cash:,.2f}")
+        summary_table.add_row("Total Combined Cash", f"${grand_total_cash_cad:,.2f}")
         summary_table.add_row(
             "Total Combined Return",
-            f"[{grand_color}]${grand_return_dol:,.2f} ({grand_return_pct:+.2f}%)[/{grand_color}]",
+            f"[{global_color}]${global_ret_dol:,.2f} ({global_ret_pct:+.2f}%)[/{global_color}]",
         )
-        summary_table.add_row(
-            "NET WORTH (Market + Cash)",
-            f"[bold cyan]${(grand_total_market_value + grand_total_cash):,.2f}[/bold cyan]",
-        )
+        summary_table.add_row("NET WORTH", f"[bold cyan]${net_worth:,.2f}[/bold cyan]")
 
         console.print(Panel(summary_table, expand=False))
 

@@ -1,6 +1,28 @@
 import yfinance as yf
 import requests
 
+import requests
+
+
+def get_usd_to_cad() -> float:
+    """Fetches the latest USD to CAD rate from the Free Currency API."""
+    primary_url = "https://latest.currency-api.pages.dev/v1/currencies/usd.json"
+    fallback_url = "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json"
+
+    try:
+        try:
+            response = requests.get(primary_url, timeout=5)
+            response.raise_for_status()
+        except:
+            response = requests.get(fallback_url, timeout=5)
+            response.raise_for_status()
+
+        data = response.json()
+        return data["usd"]["cad"]
+    except Exception as e:
+        # Fallback to a sensible default if the internet is down
+        return 1.35
+
 
 def get_current_price(ticker: str) -> float:
     """

@@ -1,39 +1,32 @@
-# Terminal Stock Advisor
+# 📈 Terminal Stock Advisor
 
-A sleek, Python-based command-line interface (CLI) that helps you manage your stock portfolio, track live prices, and get automated, sentiment-driven investment advice.
+A sleek, Python-based command-line interface (CLI) that helps you manage your stock portfolio, track live prices across multiple currencies, and get automated, sentiment-driven investment advice.
 
-Built with a modular architecture, this tool keeps your financial data stored locally while leveraging external APIs to provide real-time market context.
+Built with a modular architecture, this tool keeps your financial data stored locally while leveraging external APIs to provide real-time market context and live currency exchange rates.
 
-## Features
-
-- **Multi-Account Portfolio Management:** Track your holdings across different accounts (e.g., USD, CAD, TFSA, RRSP).
-- **Live Market Data:** Fetches real-time stock prices using `yfinance` to calculate your total return.
-- **Custom Risk Profiling:** Configure your personal risk tolerance (Conservative / Moderate / Aggressive) to receive tailored structural advice.
-- **AI Sentiment Analysis:** Automatically pulls recent news articles for the stocks you own and uses Natural Language Processing (VADER) to score the sentiment as Bullish, Bearish, or Neutral.
-- **Beautiful Terminal UI:** Utilizes `Rich` for gorgeous tables, colored text, and loading spinners.
-
-## Tech Stack
+## 🛠 Tech Stack
 
 - **Python 3.8+**
 - **CLI Framework:** [Typer](https://typer.tiangolo.com/)
 - **Terminal UI:** [Rich](https://rich.readthedocs.io/)
 - **Market Data:** [yfinance](https://pypi.org/project/yfinance/)
+- **FX Rates:** [Exchange-API (Fawaz Ahmed)](https://github.com/fawazahmed0/exchange-api)
 - **Sentiment Analysis:** [NLTK (VADER)](https://www.nltk.org/)
 
-## Installation & Setup
+## 🚀 Installation & Setup
 
 1. **Clone the repository:**
 
    ```bash
-   git clone [https://github.com/yourusername/stock-advisor.git](https://github.com/yourusername/stock-advisor.git)
+   git clone https://github.com/yourusername/stock-advisor.git
    cd stock-advisor
    ```
 
-2. **Create a virtual environment (Recommended):**
+2. **Create a virtual environment:**
 
    ```bash
    python -m venv venv
-   source venv/bin/activate  # On Windows use: venv\Scripts\activate
+   source venv/bin/activate  # Windows: venv\Scripts\activate
    ```
 
 3. **Install dependencies:**
@@ -43,31 +36,32 @@ Built with a modular architecture, this tool keeps your financial data stored lo
    ```
 
 4. **Initialize the application:**
-   Simply run the main script. On the first run, the built-in setup wizard will guide you through creating your local database and configuring your risk profile.
+   Simply run the main script to start the setup wizard.
    ```bash
    python main.py
    ```
 
 ## 💻 Usage & Commands
 
-The CLI is entirely self-documenting. You can run `python main.py --help` at any time to see available commands.
+### Portfolio Management
 
-**Portfolio Management**
+- **Add Stock:** `python main.py add-stock AAPL 10 150.00 --account USD`
+- **Sell Stock:** `python main.py sell-stock AAPL 5 175.00 --account USD`
+  - _Note: Proceeds are automatically converted to CAD and added to your cash balance._
+- **Deposit Cash:** `python main.py deposit 1000 --currency USD`
+  - _Automatically converts USD to CAD at live market rates._
+- **View Portfolio:** `python main.py view-portfolio`
+  - _Displays individual account tables plus a **Global CAD Summary** (Total Net Worth)._
 
-- `python main.py add-stock AAPL 10 150.00 --account USD` - Adds 10 shares of Apple bought at $150 to your USD account.
-- `python main.py view-portfolio` - Displays a table of all your accounts, holdings, live prices, and profit/loss.
-- `python main.py view-portfolio -a CAD` - Displays only the holdings in your CAD account.
+### Analysis & Advice
 
-**Analysis & Advice**
+- **`python main.py analyze`** - Evaluates your current portfolio structure against your target risk allocation.
+- **`python main.py market-update`** - Fetches macro market news and provides a general sentiment overview.
+- **`python main.py portfolio-news`** - Fetches specific headlines for your tickers and advises Hold/Buy/Sell based on sentiment scores.
 
-- `python main.py analyze` - Evaluates your current portfolio structure against your saved risk allocation limits.
-- `python main.py market-update` - Fetches macro market news and provides a general sentiment overview.
-- `python main.py portfolio-news` - Iterates through the tickers you own, fetches the latest headlines, and advises a Hold/Buy/Sell based on NLP sentiment scoring.
+### Configuration
 
-**Configuration**
-
-- `python main.py settings` - Displays your current risk allocation.
-- `python main.py settings -c 20 -m 60 -a 20` - Updates your risk allocation to 20% Conservative, 60% Moderate, and 20% Aggressive.
+- **`python main.py settings`** - View/Update your risk allocation (e.g., `-c 20 -m 60 -a 20`).
 
 ## 📂 Project Structure
 
@@ -76,23 +70,22 @@ stock_advisor/
 │
 ├── main.py                 # Typer CLI application entry point
 ├── requirements.txt        # Project dependencies
-├── README.md               # Project documentation
 │
-├── data/                   # Auto-generated local storage (ignored in git)
-│   ├── settings.json       # User risk profile
-│   └── portfolio.json      # Holdings and account data
+├── data/                   # Local JSON storage (git-ignored)
+│   ├── settings.json       # Risk profiles & user config
+│   └── portfolio.json      # Current holdings and cash balances
 │
-└── src/                    # Core modules
-    ├── __init__.py
-    ├── setup.py            # First-run initialization wizard
-    ├── config.py           # State management for user settings
-    ├── portfolio.py        # CRUD operations for local database
-    ├── data_client.py      # yfinance and external API integrations
-    └── advisor.py          # NLTK sentiment analysis and business logic
+└── src/                    # Core logic
+    ├── setup.py            # Initialization wizard
+    ├── config.py           # Settings management
+    ├── portfolio.py        # Logic for Buy/Sell/Deposit & FX conversion
+    ├── data_client.py      # yfinance and FX API integrations
+    └── advisor.py          # NLTK sentiment analysis engine
 ```
 
-## Future Roadmap
+## 🗺 Future Roadmap
 
-- [ ] Integrate a dedicated News API (like Finnhub or NewsAPI) for richer macro market data.
-- [ ] Add a `remove-stock` command to handle selling positions.
-- [ ] Tag individual stocks with specific risk profiles for more granular rebalancing advice.
+- [ ] **Historical Tracking:** Save daily snapshots of Net Worth to visualize growth over time.
+- [ ] **Technical Indicators:** Add RSI and Moving Average signals to the `analyze` command.
+- [ ] **Export to CSV:** Ability to export portfolio data for tax or external accounting purposes.
+- [ ] **Delete Command:** A `remove-stock` utility to quickly fix entry errors without triggering a "sale."

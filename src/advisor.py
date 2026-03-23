@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # src/advisor.py
 import os
 import json
@@ -7,6 +9,7 @@ from nltk.sentiment.vader import SentimentIntensityAnalyzer
 from google import genai
 from rich.panel import Panel
 from rich.markdown import Markdown
+
 
 # New import – we need live news & macro headlines inside the advisor
 from . import data_client

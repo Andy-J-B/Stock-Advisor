@@ -41,7 +41,7 @@ def view_portfolio(
         "ALL", "--account", "-a", help="Specific account to view (e.g., USD, CAD)"
     )
 ):
-    """View your current stock holdings with live market prices."""
+    """View your current stock holdings with live market prices and total returns."""
     current_portfolio = portfolio.load()
     accounts = current_portfolio.get("accounts", {})
 
@@ -55,68 +55,122 @@ def view_portfolio(
         [account.upper()] if account.upper() != "ALL" else accounts.keys()
     )
 
+    # Grand totals for the "All Portfolios" summary
+    grand_total_market_value = 0.0
+    grand_total_cost_basis = 0.0
+    grand_total_cash = 0.0
+
     for acc in accounts_to_show:
         if acc not in accounts:
             console.print(f"[red]Account '{acc}' not found.[/red]")
             continue
 
         holdings = accounts[acc].get("holdings", {})
+        available_cash = accounts[acc].get("cash", 0.0)
+        grand_total_cash += available_cash
 
         if not holdings:
             console.print(f"\n[bold yellow]--- {acc} Account ---[/bold yellow]")
-            console.print("Empty.")
+            console.print(f"Holdings: Empty. Cash: ${available_cash:,.2f}")
             continue
 
-        # Upgraded table with Live Price and Return columns
         table = Table(title=f"{acc} Portfolio")
         table.add_column("Ticker", style="cyan", no_wrap=True)
         table.add_column("Shares", justify="right", style="magenta")
         table.add_column("Avg Price", justify="right")
         table.add_column("Live Price", justify="right", style="blue")
-        table.add_column("Total Return", justify="right")
+        table.add_column("Return %", justify="right")
+        table.add_column("Return $", justify="right")
 
-        # ... (keep the top part of your view_portfolio command the same) ...
+        account_market_value = 0.0
+        account_cost_basis = 0.0
 
-        with console.status(
-            f"[bold green]Fetching live market data for {acc}...[/bold green]"
-        ):
-            total_market_value = 0.0
-
+        with console.status(f"[bold green]Fetching data for {acc}...[/bold green]"):
             for ticker, data in holdings.items():
                 shares = data["shares"]
                 avg_price = data["avg_price"]
                 live_price = data_client.get_current_price(ticker)
 
+                cost_basis = shares * avg_price
+                account_cost_basis += cost_basis
+
                 if live_price > 0:
-                    position_value = shares * live_price
-                    total_market_value += position_value
-                    total_return_pct = ((live_price - avg_price) / avg_price) * 100
-                    return_str = (
-                        f"[green]+{total_return_pct:.2f}%[/green]"
-                        if total_return_pct >= 0
-                        else f"[red]{total_return_pct:.2f}%[/red]"
-                    )
+                    market_val = shares * live_price
+                    account_market_value += market_val
+
+                    diff_dollars = market_val - cost_basis
+                    diff_pct = (diff_dollars / cost_basis) * 100
+
+                    color = "green" if diff_dollars >= 0 else "red"
+                    ret_pct_str = f"[{color}]{diff_pct:+.2f}%[/{color}]"
+                    ret_dol_str = f"[{color}]{diff_dollars:+.2f}[/{color}]"
                     live_price_str = f"${live_price:.2f}"
                 else:
-                    return_str = "[yellow]N/A[/yellow]"
+                    ret_pct_str = "[yellow]N/A[/yellow]"
+                    ret_dol_str = "[yellow]N/A[/yellow]"
                     live_price_str = "[yellow]Error[/yellow]"
 
                 table.add_row(
-                    ticker, str(shares), f"${avg_price:.2f}", live_price_str, return_str
+                    ticker,
+                    str(shares),
+                    f"${avg_price:.2f}",
+                    live_price_str,
+                    ret_pct_str,
+                    ret_dol_str,
                 )
 
-        console.print("\n")
         console.print(table)
 
-        available_cash = accounts[acc].get("cash", 0.0)
-        total_account_value = total_market_value + available_cash
+        # Account Summary Calculations
+        acc_total_return_dol = account_market_value - account_cost_basis
+        acc_total_return_pct = (
+            (acc_total_return_dol / account_cost_basis * 100)
+            if account_cost_basis > 0
+            else 0
+        )
 
+        # Add to Grand Totals
+        grand_total_market_value += account_market_value
+        grand_total_cost_basis += account_cost_basis
+
+        # Print individual account summary
+        ret_color = "green" if acc_total_return_dol >= 0 else "red"
         console.print(
-            f"[bold]Buying Power (Cash):[/bold] [green]${available_cash:,.2f}[/green]"
+            f"  [bold]Cash Balance:[/bold]        [white]${available_cash:,.2f}[/white]"
         )
         console.print(
-            f"[bold]Total Account Value:[/bold] [cyan]${total_account_value:,.2f}[/cyan]\n"
+            f"  [bold]Account Return:[/bold]      [{ret_color}]${acc_total_return_dol:,.2f} ({acc_total_return_pct:+.2f}%)[/{ret_color}]"
         )
+        console.print(
+            f"  [bold]Total Account Value:[/bold] [cyan]${(account_market_value + available_cash):,.2f}[/cyan]\n"
+        )
+
+    # Final Global Summary (Only show if viewing ALL or if multiple accounts exist)
+    if len(accounts_to_show) > 1:
+        grand_return_dol = grand_total_market_value - grand_total_cost_basis
+        grand_return_pct = (
+            (grand_return_dol / grand_total_cost_basis * 100)
+            if grand_total_cost_basis > 0
+            else 0
+        )
+        grand_color = "green" if grand_return_dol >= 0 else "red"
+
+        summary_table = Table(
+            show_header=False,
+            border_style="bright_blue",
+            title="[bold blue]GLOBAL PORTFOLIO SUMMARY[/bold blue]",
+        )
+        summary_table.add_row("Total Combined Cash", f"${grand_total_cash:,.2f}")
+        summary_table.add_row(
+            "Total Combined Return",
+            f"[{grand_color}]${grand_return_dol:,.2f} ({grand_return_pct:+.2f}%)[/{grand_color}]",
+        )
+        summary_table.add_row(
+            "NET WORTH (Market + Cash)",
+            f"[bold cyan]${(grand_total_market_value + grand_total_cash):,.2f}[/bold cyan]",
+        )
+
+        console.print(Panel(summary_table, expand=False))
 
 
 @app.command()

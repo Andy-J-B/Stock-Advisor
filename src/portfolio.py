@@ -1,5 +1,7 @@
 import json
 from src.setup import PORTFOLIO_FILE
+from datetime import date
+from src import data_client
 
 
 def load():
@@ -126,3 +128,46 @@ def get_account_holdings(account: str):
     portfolio_data = load()
     account = account.upper()
     return portfolio_data.get("accounts", {}).get(account, {}).get("holdings", {})
+
+
+HISTORY_FILE = PORTFOLIO_FILE.parent / "history.json"
+
+
+def log_net_worth():
+    """Calculates total CAD net worth and logs it for the current date."""
+    portfolio_data = load()
+    accounts = portfolio_data.get("accounts", {})
+    fx_rate = data_client.get_usd_to_cad()
+
+    total_net_worth_cad = 0.0
+
+    for acc_name, acc_data in accounts.items():
+        multiplier = fx_rate if acc_name == "USD" else 1.0
+        total_net_worth_cad += acc_data.get("cash", 0.0) * multiplier
+
+        for ticker, holding in acc_data.get("holdings", {}).items():
+            live_price = data_client.get_current_price(ticker)
+            if live_price > 0:
+                total_net_worth_cad += (holding["shares"] * live_price) * multiplier
+
+    # Load existing history
+    if HISTORY_FILE.exists():
+        with open(HISTORY_FILE, "r") as f:
+            history = json.load(f)
+    else:
+        history = {}
+
+    # Update today's value (overwrites if run multiple times in one day)
+    today_str = date.today().isoformat()
+    history[today_str] = round(total_net_worth_cad, 2)
+
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(history, f, indent=4)
+
+
+def get_history() -> dict:
+    """Returns the net worth history."""
+    if HISTORY_FILE.exists():
+        with open(HISTORY_FILE, "r") as f:
+            return json.load(f)
+    return {}

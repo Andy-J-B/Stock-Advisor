@@ -9,7 +9,7 @@ from nltk.sentiment.vader import SentimentIntensityAnalyzer
 from google import genai
 from rich.panel import Panel
 from rich.markdown import Markdown
-
+from .data_client import cache, get_advanced_metrics, get_ticker_news
 
 # New import – we need live news & macro headlines inside the advisor
 from . import data_client
@@ -435,72 +435,58 @@ def evaluate_portfolio(current_portfolio: dict, user_settings: dict) -> str:
 # Add this function to src/advisor.py
 
 
+@cache.memoize(expire=43200)
 def generate_stock_report(ticker: str, current_portfolio: dict) -> str:
-    """
-    Generates a comprehensive investment thesis for a specific ticker
-    using Gemini, taking into account the user's current portfolio.
-    """
+    """Generates a comprehensive investment thesis using hard data."""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        return "[yellow]GEMINI_API_KEY not found. Cannot generate report.[/yellow]"
+        return "GEMINI_API_KEY not found. Cannot generate report."
 
-    # 1. Extract portfolio context for the prompt
+    # 1. Get Hard Data
+    metrics = get_advanced_metrics(ticker)
+    metrics_text = "\n".join([f"- {k}: {v}" for k, v in metrics.items()])
+
+    # 2. Portfolio Context
     accounts = current_portfolio.get("accounts", {})
     owned_shares = 0
     avg_price = 0.0
-    total_cash = 0.0
-    matched_ticker = ticker.upper()
 
     for acc_data in accounts.values():
-        total_cash += acc_data.get("cash", 0.0)
         holdings = acc_data.get("holdings", {})
         for h_ticker, h_data in holdings.items():
-            # Matches 'MSFT' to 'MSFT.NE'
             if ticker.upper() in h_ticker.upper():
                 owned_shares += h_data["shares"]
                 avg_price = h_data["avg_price"]
-                matched_ticker = h_ticker
 
-    portfolio_context = f"""
-    **CLIENT PORTFOLIO CONTEXT**
-    - Total Available Cash (Buying Power): ${total_cash:,.2f}
-    - Current Position in {matched_ticker}: {owned_shares} shares @ ${avg_price:.2f} average price.
-    """
+    # 3. News Context
+    recent_news = get_ticker_news(ticker, limit=5)
+    news_text = "\n".join(
+        [f"- {n.get('title')} ({n.get('publisher')})" for n in recent_news]
+    )
 
-    # 2. Fetch recent news to give the AI up-to-date context
-    try:
-        from . import data_client
-
-        recent_news = data_client.get_ticker_news(ticker, limit=5)
-        news_text = "\n".join(
-            [f"- {n.get('title')} ({n.get('publisher')})" for n in recent_news]
-        )
-    except Exception:
-        news_text = "No recent news available."
-
-    # 3. Build the prompt
     prompt = f"""
-    Role: Act as a Senior Equity Research Analyst specializing in Value and Growth investing.
-    Task: Conduct a comprehensive investment thesis and risk assessment for {ticker.upper()}.
+    Role: Act as a Senior Equity Research Analyst.
+    Task: Conduct a comprehensive investment thesis for {ticker.upper()}.
 
-    {portfolio_context}
+    **HARD FINANCIAL METRICS (Do not hallucinate these numbers, use them):**
+    {metrics_text}
 
-    **RECENT NEWS CONTEXT**
+    **CLIENT PORTFOLIO CONTEXT:**
+    - Current Position: {owned_shares} shares @ ${avg_price:.2f} average.
+
+    **RECENT NEWS:**
     {news_text}
 
-    Please provide a detailed report covering the following six pillars formatted in clean Markdown:
-
-    1. **Company Profile & Moat:** What is their primary revenue model? What is their "Economic Moat" (competitive advantage)? Mention recent leadership changes or shifts in corporate strategy.
-    2. **Financial Health & Key Stats:** Analyze the most recent quarterly earnings. Include P/E ratio (relative to industry average), Debt-to-Equity, Free Cash Flow trends, and Revenue growth (YoY). Is the dividend sustainable (if applicable)?
-    3. **Analyst Sentiment & Institutional Ownership:** Summarize the current "Buy/Hold/Sell" consensus from major Wall Street banks. What is the average 12-month price target? 
-    4. **Macro-Economic State:** How does the current economic environment (interest rates, inflation, geopolitical stability) specifically impact this company’s sector? Is it a defensive play or highly sensitive to a recession?
-    5. **Technical Analysis & Entry Price:** Based on recent support and resistance levels, what is considered a "Fair Value" entry price? Identify the "Margin of Safety" price (20% below intrinsic value).
-    6. **Red Flags & "What to Look Out For":** List the top 3 specific risks (regulatory, competitive, or financial) that could break the investment thesis over the next 12–24 months.
-
-    **Conclusion:** Provide a final "Verdict" (Bullish, Bearish, or Neutral) and a recommended "Action Plan" (e.g., Dollar Cost Average, Wait for Pullback, or Avoid) specifically tailored to the Client Portfolio Context provided above.
+    Please provide a detailed report covering:
+    1. Company Profile & Moat
+    2. Financial Health (Reference the Hard Financial Metrics provided)
+    3. Analyst Sentiment
+    4. Macro-Economic State
+    5. Technical Analysis & Entry Price
+    6. Red Flags
+    7. Conclusion & Action Plan tailored to the Client Portfolio Context.
     """
 
-    # 4. Call Gemini
     try:
         from google import genai
 
@@ -511,4 +497,4 @@ def generate_stock_report(ticker: str, current_portfolio: dict) -> str:
         )
         return response.text
     except Exception as e:
-        return f"[red]Error contacting Gemini API: {e}[/red]"
+        return f"Error contacting Gemini API: {e}"

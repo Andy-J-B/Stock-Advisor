@@ -120,6 +120,18 @@ def add_position(account: str, ticker: str, shares: float, price: float):
         # Brand new position
         holdings[ticker] = {"shares": shares, "avg_price": price}
 
+    # Calculate proceeds
+    proceeds = shares * price
+
+    if account == "USD":
+        portfolio_data["accounts"]["USD"]["cash"] = (
+            portfolio_data["accounts"].get("USD", {}).get("cash", 0.0) - proceeds
+        )
+    else:
+        portfolio_data["accounts"]["CAD"]["cash"] = (
+            portfolio_data["accounts"].get("CAD", {}).get("cash", 0.0) - proceeds
+        )
+
     save(portfolio_data)
 
 

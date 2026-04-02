@@ -9,7 +9,7 @@ from nltk.sentiment.vader import SentimentIntensityAnalyzer
 from google import genai
 from rich.panel import Panel
 from rich.markdown import Markdown
-
+from .data_client import cache, get_advanced_metrics, get_ticker_news
 
 # New import – we need live news & macro headlines inside the advisor
 from . import data_client
@@ -430,3 +430,71 @@ def evaluate_portfolio(current_portfolio: dict, user_settings: dict) -> str:
     advice += "\n[italic]Tip: In a future update, tag your individual stocks by risk category to get mathematically precise rebalancing advice![/italic]"
 
     return advice
+
+
+# Add this function to src/advisor.py
+
+
+@cache.memoize(expire=43200)
+def generate_stock_report(ticker: str, current_portfolio: dict) -> str:
+    """Generates a comprehensive investment thesis using hard data."""
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY not found. Cannot generate report.")
+
+    # 1. Get Hard Data
+    metrics = get_advanced_metrics(ticker)
+    metrics_text = "\n".join([f"- {k}: {v}" for k, v in metrics.items()])
+
+    # 2. Portfolio Context
+    accounts = current_portfolio.get("accounts", {})
+    owned_shares = 0
+    avg_price = 0.0
+
+    for acc_data in accounts.values():
+        holdings = acc_data.get("holdings", {})
+        for h_ticker, h_data in holdings.items():
+            if ticker.upper() in h_ticker.upper():
+                owned_shares += h_data["shares"]
+                avg_price = h_data["avg_price"]
+
+    # 3. News Context
+    recent_news = get_ticker_news(ticker, limit=5)
+    news_text = "\n".join(
+        [f"- {n.get('title')} ({n.get('publisher')})" for n in recent_news]
+    )
+
+    prompt = f"""
+    Role: Act as a Senior Equity Research Analyst.
+    Task: Conduct a comprehensive investment thesis for {ticker.upper()}.
+
+    **HARD FINANCIAL METRICS (Do not hallucinate these numbers, use them):**
+    {metrics_text}
+
+    **CLIENT PORTFOLIO CONTEXT:**
+    - Current Position: {owned_shares} shares @ ${avg_price:.2f} average.
+
+    **RECENT NEWS:**
+    {news_text}
+
+    Please provide a detailed report covering:
+    1. Company Profile & Moat
+    2. Financial Health (Reference the Hard Financial Metrics provided)
+    3. Analyst Sentiment
+    4. Macro-Economic State
+    5. Technical Analysis & Entry Price
+    6. Red Flags
+    7. Conclusion & Action Plan tailored to the Client Portfolio Context.
+    """
+
+    try:
+        from google import genai
+
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        return response.text
+    except Exception as e:
+        return f"Error contacting Gemini API: {e}"

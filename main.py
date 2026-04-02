@@ -3,6 +3,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from dotenv import load_dotenv
+from rich.markdown import Markdown
 
 load_dotenv()
 
@@ -354,3 +355,26 @@ def settings(
 
 if __name__ == "__main__":
     app()
+
+
+@app.command()
+def research(ticker: str):
+    """Feature 4: Get a deep-dive analyst report and action plan for a specific stock."""
+    current_portfolio = portfolio.load()
+
+    with console.status(
+        f"[bold cyan]Compiling Senior Analyst Report for {ticker.upper()}... This may take a few seconds.[/bold cyan]"
+    ):
+        report_md = advisor.generate_stock_report(ticker, current_portfolio)
+
+    if "Error" in report_md or "not found" in report_md:
+        console.print(report_md)
+    else:
+        # Wrap the markdown in a nice panel
+        console.print(
+            Panel(
+                Markdown(report_md),
+                title=f"📈 Investment Thesis: {ticker.upper()}",
+                border_style="cyan",
+            )
+        )

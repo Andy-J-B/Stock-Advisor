@@ -40,21 +40,46 @@ def get_current_price(ticker: str) -> float:
 def get_advanced_metrics(ticker: str) -> dict:
     """Fetches hard financial data to inject into the AI prompt."""
     try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        return {
-            "Trailing P/E": info.get("trailingPE", "N/A"),
-            "Forward P/E": info.get("forwardPE", "N/A"),
-            "Debt-to-Equity": info.get("debtToEquity", "N/A"),
-            "Dividend Yield": (
-                f"{info.get('dividendYield', 0) * 100:.2f}%"
-                if info.get("dividendYield")
-                else "N/A"
-            ),
-            "Free Cash Flow": info.get("freeCashflow", "N/A"),
-            "52 Week High": info.get("fiftyTwoWeekHigh", "N/A"),
-            "52 Week Low": info.get("fiftyTwoWeekLow", "N/A"),
-        }
+        if ticker[-3:] == ".NE":
+            preticker = ticker.removesuffix(".NE")
+            if preticker == "VISA":
+                preticker = "V"
+            prestock = yf.Ticker(preticker)
+            preinfo = prestock.info
+            stock = yf.Ticker(ticker)
+            info = stock.info
+
+            return {
+                "Trailing P/E": preinfo.get("trailingPE", "N/A"),
+                "Forward P/E": preinfo.get("forwardPE", "N/A"),
+                "Debt-to-Equity": preinfo.get("debtToEquity", "N/A"),
+                "Dividend Yield": (
+                    f"{preinfo.get('dividendYield', 0) * 100:.2f}%"
+                    if preinfo.get("dividendYield")
+                    else "N/A"
+                ),
+                "Free Cash Flow": preinfo.get("freeCashflow", "N/A"),
+                "52 Week High": info.get("fiftyTwoWeekHigh", "N/A"),
+                "52 Week Low": info.get("fiftyTwoWeekLow", "N/A"),
+            }
+
+        else:
+            stock = yf.Ticker(ticker)
+            info = stock.info
+
+            return {
+                "Trailing P/E": info.get("trailingPE", "N/A"),
+                "Forward P/E": info.get("forwardPE", "N/A"),
+                "Debt-to-Equity": info.get("debtToEquity", "N/A"),
+                "Dividend Yield": (
+                    f"{info.get('dividendYield', 0) * 100:.2f}%"
+                    if info.get("dividendYield")
+                    else "N/A"
+                ),
+                "Free Cash Flow": info.get("freeCashflow", "N/A"),
+                "52 Week High": info.get("fiftyTwoWeekHigh", "N/A"),
+                "52 Week Low": info.get("fiftyTwoWeekLow", "N/A"),
+            }
     except Exception:
         return {}
 

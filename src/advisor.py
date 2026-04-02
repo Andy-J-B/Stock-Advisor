@@ -440,7 +440,7 @@ def generate_stock_report(ticker: str, current_portfolio: dict) -> str:
     """Generates a comprehensive investment thesis using hard data."""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        return "GEMINI_API_KEY not found. Cannot generate report."
+        raise ValueError("GEMINI_API_KEY not found. Cannot generate report.")
 
     # 1. Get Hard Data
     metrics = get_advanced_metrics(ticker)

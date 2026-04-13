@@ -74,9 +74,14 @@ def sell_position(account: str, ticker: str, shares: float, price: float):
         del holdings[ticker]
 
     # Add to CAD cash bucket
-    portfolio_data["accounts"]["CAD"]["cash"] = (
-        portfolio_data["accounts"].get("CAD", {}).get("cash", 0.0) + final_proceeds
-    )
+    if account == "USD":
+        portfolio_data["accounts"]["USD"]["cash"] = (
+            portfolio_data["accounts"].get("USD", {}).get("cash", 0.0) + final_proceeds
+        )
+    else:
+        portfolio_data["accounts"]["CAD"]["cash"] = (
+            portfolio_data["accounts"].get("CAD", {}).get("cash", 0.0) + final_proceeds
+        )
 
     save(portfolio_data)
     return final_proceeds, rate

@@ -7,7 +7,10 @@ from src import data_client
 def load():
     if not PORTFOLIO_FILE.exists():
         return {
-            "accounts": {"USD": {"holdings": {}}, "CAD": {"holdings": {"cash": 0.0}}}
+            "accounts": {
+                "USD": {"holdings": {}, "cash": 0.0, "initial_cash": 0.0},
+                "CAD": {"holdings": {}, "cash": 0.0, "initial_cash": 0.0},
+            }
         }
     with open(PORTFOLIO_FILE, "r") as f:
         return json.load(f)
@@ -23,8 +26,25 @@ def ensure_account_exists(portfolio_data, account_name):
     if "accounts" not in portfolio_data:
         portfolio_data["accounts"] = {}
     if account_name not in portfolio_data["accounts"]:
-        portfolio_data["accounts"][account_name] = {"holdings": {}, "cash": 0.0}
+        portfolio_data["accounts"][account_name] = {
+            "holdings": {},
+            "cash": 0.0,
+            "initial_cash": 0.0,
+        }
+
+    # Backward compatibility: Add initial_cash to existing accounts if missing
+    if "initial_cash" not in portfolio_data["accounts"][account_name]:
+        portfolio_data["accounts"][account_name]["initial_cash"] = 0.0
+
     return portfolio_data, account_name
+
+
+def set_initial_cash(account: str, amount: float):
+    """Sets the initial deposit amount for an account to track all-time returns."""
+    portfolio_data = load()
+    portfolio_data, account = ensure_account_exists(portfolio_data, account)
+    portfolio_data["accounts"][account]["initial_cash"] = float(amount)
+    save(portfolio_data)
 
 
 def deposit_cash(amount: float, currency: str):

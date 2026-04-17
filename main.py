@@ -7,8 +7,6 @@ from rich.markdown import Markdown
 
 load_dotenv()
 
-# Import our custom modules from the src directory
-# Note: These will show errors in your editor until you create the actual files in src/
 from src import setup, portfolio, advisor, config, data_client
 
 app = typer.Typer(
@@ -21,12 +19,7 @@ console = Console()
 
 @app.callback(invoke_without_command=True)
 def main_setup(ctx: typer.Context):
-    """
-    Runs before every command to ensure the app is initialized.
-    """
     just_initialized = setup.initialize_app()
-
-    # If no command was passed (e.g., user just typed `python main.py`), show the help menu
     if ctx.invoked_subcommand is None and not just_initialized:
         console.print(
             Panel.fit(
@@ -73,6 +66,20 @@ def sell_stock(
         console.print(f"[red]Error: {e}[/red]")
 
 
+@app.command(name="set-initial")
+def set_initial_cmd(
+    amount: float,
+    account: str = typer.Option(
+        "USD", "--account", "-a", help="Account to update (e.g., USD, CAD)"
+    ),
+):
+    """Set the initial cash investment amount for an account to track all-time returns."""
+    portfolio.set_initial_cash(account, amount)
+    console.print(
+        f"[bold green]Successfully set {account.upper()} initial investment to ${amount:,.2f}[/bold green]"
+    )
+
+
 @app.command()
 def view_portfolio(
     account: str = typer.Option(
@@ -80,7 +87,12 @@ def view_portfolio(
     )
 ):
     """View portfolio with live market prices, currency conversion, and total returns."""
+    # Run ensure_account_exists indirectly via loading to patch old JSON files
     current_portfolio = portfolio.load()
+    for acc in ["USD", "CAD"]:
+        portfolio.ensure_account_exists(current_portfolio, acc)
+
+    current_portfolio = portfolio.load()  # Reload patched data
     accounts = current_portfolio.get("accounts", {})
 
     if not accounts:
@@ -89,7 +101,6 @@ def view_portfolio(
         )
         return
 
-    # Fetch live FX rate for normalization
     with console.status("[bold green]Fetching live exchange rates...[/bold green]"):
         fx_rate = data_client.get_usd_to_cad()
 
@@ -101,6 +112,7 @@ def view_portfolio(
     grand_total_value_cad = 0.0
     grand_total_cost_cad = 0.0
     grand_total_cash_cad = 0.0
+    grand_total_initial_cad = 0.0
 
     for acc_name in accounts_to_show:
         if acc_name not in accounts:
@@ -109,12 +121,12 @@ def view_portfolio(
 
         holdings = accounts[acc_name].get("holdings", {})
         cash = accounts[acc_name].get("cash", 0.0)
+        initial_cash = accounts[acc_name].get("initial_cash", 0.0)
 
-        # Determine multiplier for this account's contribution to global CAD totals
         multiplier = fx_rate if acc_name == "USD" else 1.0
         grand_total_cash_cad += cash * multiplier
+        grand_total_initial_cad += initial_cash * multiplier
 
-        # Build Table for the specific account
         table = Table(
             title=f"[bold cyan]{acc_name} Portfolio[/bold cyan] (FX: {multiplier:.4f})"
         )
@@ -140,7 +152,6 @@ def view_portfolio(
                     avg_price = data["avg_price"]
                     live_price = data_client.get_current_price(ticker)
 
-                    # Logic for individual account display
                     cost = shares * avg_price
                     acc_cost_basis += cost
 
@@ -156,7 +167,6 @@ def view_portfolio(
                         ret_dol_str = f"[{color}]{diff:+.2f}[/{color}]"
                         live_price_str = f"${live_price:.2f}"
 
-                        # Add to Grand Totals (Converted to CAD)
                         grand_total_value_cad += value * multiplier
                         grand_total_cost_cad += cost * multiplier
                     else:
@@ -175,24 +185,37 @@ def view_portfolio(
 
             console.print(table)
 
-            # Account-specific summary (Local Currency)
+            # Account-specific summary
             acc_ret_dol = acc_market_value - acc_cost_basis
             acc_ret_pct = (
                 (acc_ret_dol / acc_cost_basis * 100) if acc_cost_basis > 0 else 0
             )
             ret_color = "green" if acc_ret_dol >= 0 else "red"
 
+            total_acc_value = acc_market_value + cash
+            all_time_ret_dol = total_acc_value - initial_cash
+            all_time_ret_pct = (
+                (all_time_ret_dol / initial_cash * 100) if initial_cash > 0 else 0
+            )
+            all_time_color = "green" if all_time_ret_dol >= 0 else "red"
+
+            console.print(
+                f"  [bold]Initial Investment:[/bold]  [white]${initial_cash:,.2f}[/white]"
+            )
             console.print(
                 f"  [bold]Cash Balance:[/bold]        [white]${cash:,.2f}[/white]"
             )
             console.print(
-                f"  [bold]Account Return:[/bold]      [{ret_color}]${acc_ret_dol:,.2f} ({acc_ret_pct:+.2f}%)[/{ret_color}]"
+                f"  [bold]Holdings Return:[/bold]     [{ret_color}]${acc_ret_dol:,.2f} ({acc_ret_pct:+.2f}%)[/{ret_color}]"
             )
             console.print(
-                f"  [bold]Total Account Value:[/bold] [cyan]${(acc_market_value + cash):,.2f}[/cyan]\n"
+                f"  [bold]All-Time Return:[/bold]     [{all_time_color}]${all_time_ret_dol:,.2f} ({all_time_ret_pct:+.2f}%)[/{all_time_color}]"
+            )
+            console.print(
+                f"  [bold]Total Account Value:[/bold] [cyan]${total_acc_value:,.2f}[/cyan]\n"
             )
 
-    # Global Summary Panel (Always normalized to CAD)
+    # Global Summary Panel
     if len(accounts_to_show) > 0:
         global_ret_dol = grand_total_value_cad - grand_total_cost_cad
         global_ret_pct = (
@@ -201,17 +224,33 @@ def view_portfolio(
             else 0
         )
         global_color = "green" if global_ret_dol >= 0 else "red"
+
         net_worth = grand_total_value_cad + grand_total_cash_cad
+
+        global_all_time_dol = net_worth - grand_total_initial_cad
+        global_all_time_pct = (
+            (global_all_time_dol / grand_total_initial_cad * 100)
+            if grand_total_initial_cad > 0
+            else 0
+        )
+        global_all_time_color = "green" if global_all_time_dol >= 0 else "red"
 
         summary_table = Table(
             show_header=False,
             border_style="bright_blue",
             title="[bold blue]GLOBAL PORTFOLIO SUMMARY (CAD)[/bold blue]",
         )
+        summary_table.add_row(
+            "Total Initial Invested", f"${grand_total_initial_cad:,.2f}"
+        )
         summary_table.add_row("Total Combined Cash", f"${grand_total_cash_cad:,.2f}")
         summary_table.add_row(
-            "Total Combined Return",
+            "Active Holdings Return",
             f"[{global_color}]${global_ret_dol:,.2f} ({global_ret_pct:+.2f}%)[/{global_color}]",
+        )
+        summary_table.add_row(
+            "All-Time Global Return",
+            f"[{global_all_time_color}]${global_all_time_dol:,.2f} ({global_all_time_pct:+.2f}%)[/{global_all_time_color}]",
         )
         summary_table.add_row("NET WORTH", f"[bold cyan]${net_worth:,.2f}[/bold cyan]")
 
@@ -256,7 +295,6 @@ def analyze():
     user_settings = config.load_settings()
     current_portfolio = portfolio.load()
 
-    # --- BUG FIX: Check the new multi-account structure ---
     accounts = current_portfolio.get("accounts", {})
     has_assets = False
     for acc_name, acc_data in accounts.items():
@@ -270,7 +308,6 @@ def analyze():
         )
         return
 
-    # Pass the data to the brain (advisor.py)
     with console.status("[bold cyan]Consulting AI Advisor...[/bold cyan]"):
         advice = advisor.evaluate_portfolio(current_portfolio, user_settings)
 
@@ -321,9 +358,7 @@ def settings(
     ),
 ):
     """View or update your advisor risk allocation."""
-    # If the user provided ANY of the options, they are trying to update
     if any(x is not None for x in [conservative, moderate, aggressive]):
-        # Default to 0 if an option wasn't provided, to handle the math
         c = conservative or 0
         m = moderate or 0
         a = aggressive or 0
@@ -338,7 +373,6 @@ def settings(
         config.update_allocation(c, m, a)
         console.print("[bold green]Risk allocation successfully updated![/bold green]")
 
-    # If they just ran `python main.py settings` without options, just view current
     current = config.load_settings()
     alloc = current.get("risk_allocation", {})
 
@@ -351,10 +385,6 @@ def settings(
     table.add_row("Aggressive", f"{alloc.get('aggressive', 0)}%")
 
     console.print(table)
-
-
-if __name__ == "__main__":
-    app()
 
 
 @app.command()
@@ -370,7 +400,6 @@ def research(ticker: str):
     if "Error" in report_md or "not found" in report_md:
         console.print(report_md)
     else:
-        # Wrap the markdown in a nice panel
         console.print(
             Panel(
                 Markdown(report_md),
@@ -378,3 +407,7 @@ def research(ticker: str):
                 border_style="cyan",
             )
         )
+
+
+if __name__ == "__main__":
+    app()

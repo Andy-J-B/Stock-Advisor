@@ -193,9 +193,7 @@ for **{ticker.upper()}** and provide a concise markdown report containing:
         )
 
 
-# ----------------------------------------------------------------------
-# 3️⃣  Portfolio‑wide AI advice (now enriched with macro and ticker news)
-# ----------------------------------------------------------------------
+
 def get_gemini_analysis(
     current_portfolio: dict,
     user_settings: dict,
@@ -205,20 +203,13 @@ def get_gemini_analysis(
     ticker_news: dict | None = None,
 ) -> str:
     """
-    Sends the *entire* portfolio, user risk profile, recent macro headlines,
-    and ticker‑level news to Gemini‑2.5‑flash and returns a markdown‑formatted
-    analysis.
-
-    The function gracefully degrades to a plain‑text warning when the API key
-    is missing or the request fails.
+    Sends a highly structured text summary of the portfolio, risk profile, and news 
+    to Gemini‑2.5‑flash for analysis.
     """
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         return "[yellow]GEMINI_API_KEY not found in environment. Skipping advanced AI analysis.[/yellow]"
 
-    # --------------------------------------------------------------
-    #   Data that will be stitched into the prompt
-    # --------------------------------------------------------------
     allocations = user_settings.get("risk_allocation", {})
     c = allocations.get("conservative", 0)
     m = allocations.get("moderate", 100)
@@ -226,71 +217,67 @@ def get_gemini_analysis(
 
     accounts_data = current_portfolio.get("accounts", {})
 
-    # --------------------------------------------------------------
-    #   Base prompt (profile + portfolio)
-    # --------------------------------------------------------------
+    # Translate the JSON into a clean string so the AI doesn't hallucinate
+    portfolio_summary = ""
+    for acc_name, acc_data in accounts_data.items():
+        cash = acc_data.get('cash', 0.0)
+        init = acc_data.get('initial_cash', 0.0)
+        holdings = acc_data.get('holdings', {})
+        
+        portfolio_summary += f"\n### {acc_name.upper()} Account\n"
+        portfolio_summary += f"- **Initial Investment All-Time:** ${init:,.2f}\n"
+        portfolio_summary += f"- **Current Available Cash:** ${cash:,.2f}\n"
+        portfolio_summary += "- **Holdings:**\n"
+        
+        if not holdings:
+            portfolio_summary += "  - No active positions.\n"
+        else:
+            for tk, hk in holdings.items():
+                portfolio_summary += f"  - {tk}: {hk['shares']} shares @ ${hk['avg_price']:.2f} avg cost\n"
+
     prompt = f"""
-You are an expert, professional financial‑advisor AI.
+You are an expert, professional financial‑advisor AI specializing in Value and Growth analysis.
 
 **CLIENT PROFILE**
 - Target Risk Allocation: {c}% Conservative, {m}% Moderate, {a}% Aggressive.
-- Total Cash (Buying Power): ${total_cash:,.2f}
 - Total Unique Stock Positions: {total_holdings}
 
-**PORTFOLIO DATA (JSON)**
-{json.dumps(accounts_data, indent=2)}
-
+**PORTFOLIO HOLDINGS**
+{portfolio_summary}
 """
 
-    # --------------------------------------------------------------
-    #   Optional macro‑news section
-    # --------------------------------------------------------------
     if macro_news:
         macro_section = "\n**MACRO ECONOMIC HEADLINES**\n"
         for i, article in enumerate(macro_news[:10], start=1):
             title = article.get("title", "").strip()
-            src = ""
-            src_obj = article.get("source", {})
-            if isinstance(src_obj, dict):
-                src = src_obj.get("name", "")
-            else:
-                src = article.get("publisher", "")
+            src = article.get("source", {}).get("name", "") if isinstance(article.get("source"), dict) else article.get("publisher", "")
             macro_section += f"{i}. {title} ({src})\n"
         prompt += macro_section
 
-    # --------------------------------------------------------------
-    #   Optional ticker‑level news
-    # --------------------------------------------------------------
     if ticker_news:
         ticker_section = "\n**TICKER‑SPECIFIC NEWS**\n"
         for tk, articles in ticker_news.items():
-            ticker_section += f"\n***{tk.upper()}***\n"
-            for i, article in enumerate(articles[:5], start=1):
-                title = article.get("title", "").strip()
-                src = article.get("publisher", "")
-                ticker_section += f"{i}. {title} ({src})\n"
+            if articles:
+                ticker_section += f"\n***{tk.upper()}***\n"
+                for i, article in enumerate(articles[:3], start=1):
+                    title = article.get("title", "").strip()
+                    src = article.get("publisher", "")
+                    ticker_section += f"{i}. {title} ({src})\n"
         prompt += ticker_section
 
-    # --------------------------------------------------------------
-    #   The ‘Your Task’ part – we ask Gemini to produce a structured report.
-    # --------------------------------------------------------------
     prompt += """
 **YOUR TASK**
 Provide a concise, highly‑structured analysis formatted in clean Markdown. Include:
 
-1. **Diversification** – assess exposure across sectors, asset classes, and any concentration risk.
-2. **Cash Position** – comment on the buying‑power relative to the client’s risk profile.
-3. **Macro Environment Impact** – how the headlines above could affect the portfolio.
-4. **Ticker‑Level Sentiment** – brief take on the news for each holding (if news supplied).
-5. **Actionable Recommendations** – 2‑3 concrete steps (e.g., “Deploy $X cash into defensive ETFs”, “Consider reducing exposure to over‑weighted tech”, “Add exposure to REITs”, etc.).
-6. **Disclaimer** – a short note that the output is not personal investment advice.
+1. **Portfolio Health & Diversification** – assess exposure across sectors and comment on their all-time performance vs current cash drag.
+2. **Macro Environment Impact** – how the headlines above could specifically affect their current holdings.
+3. **Ticker‑Level Sentiment** – brief take on the news for the specific holdings.
+4. **Actionable Recommendations** – 2‑3 concrete steps tailored strictly to their target risk allocation.
+5. **Disclaimer** – a short note that the output is not personal investment advice.
 
-**Tone** – Professional, objective, insightful, and concise. Do NOT use filler introductions like “Here is your analysis”. Use headings, bullet points and bold for emphasis.
+**Tone** – Professional, objective, and direct. Use headings, bullet points, and bold for emphasis.
 """
 
-    # --------------------------------------------------------------
-    #   Call Gemini
-    # --------------------------------------------------------------
     try:
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(

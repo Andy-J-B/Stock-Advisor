@@ -193,6 +193,32 @@ for **{ticker.upper()}** and provide a concise markdown report containing:
         )
 
 
+def compute_portfolio_stats(portfolio):
+    from collections import defaultdict
+    from .data_client import get_current_price
+
+    sector_exposure = defaultdict(float)
+    total_value = 0
+
+    for acc in portfolio.get("accounts", {}).values():
+        for ticker, data in acc.get("holdings", {}).items():
+            price = get_current_price(ticker)
+            value = price * data["shares"]
+
+            total_value += value
+
+            # naive sector tagging (you can improve later)
+            if ticker in ["VFV.TO", "VCE.TO"]:
+                sector = "ETF"
+            elif "MSFT" in ticker:
+                sector = "Tech"
+            else:
+                sector = "Other"
+
+            sector_exposure[sector] += value
+
+    return total_value, sector_exposure
+
 
 def get_gemini_analysis(
     current_portfolio: dict,
@@ -203,7 +229,7 @@ def get_gemini_analysis(
     ticker_news: dict | None = None,
 ) -> str:
     """
-    Sends a highly structured text summary of the portfolio, risk profile, and news 
+    Sends a highly structured text summary of the portfolio, risk profile, and news
     to Gemini‑2.5‑flash for analysis.
     """
     api_key = os.getenv("GEMINI_API_KEY")
@@ -217,18 +243,20 @@ def get_gemini_analysis(
 
     accounts_data = current_portfolio.get("accounts", {})
 
+    total_value, sector_exposure = compute_portfolio_stats(current_portfolio)
+
     # Translate the JSON into a clean string so the AI doesn't hallucinate
     portfolio_summary = ""
     for acc_name, acc_data in accounts_data.items():
-        cash = acc_data.get('cash', 0.0)
-        init = acc_data.get('initial_cash', 0.0)
-        holdings = acc_data.get('holdings', {})
-        
+        cash = acc_data.get("cash", 0.0)
+        init = acc_data.get("initial_cash", 0.0)
+        holdings = acc_data.get("holdings", {})
+
         portfolio_summary += f"\n### {acc_name.upper()} Account\n"
         portfolio_summary += f"- **Initial Investment All-Time:** ${init:,.2f}\n"
         portfolio_summary += f"- **Current Available Cash:** ${cash:,.2f}\n"
         portfolio_summary += "- **Holdings:**\n"
-        
+
         if not holdings:
             portfolio_summary += "  - No active positions.\n"
         else:
@@ -241,7 +269,12 @@ You are an expert, professional financial‑advisor AI specializing in Value and
 **CLIENT PROFILE**
 - Target Risk Allocation: {c}% Conservative, {m}% Moderate, {a}% Aggressive.
 - Total Unique Stock Positions: {total_holdings}
+**PORTFOLIO BREAKDOWN**
 
+Total Value: ${total_value:,.2f}
+
+Sector Exposure:
+{json.dumps(sector_exposure, indent=2)}
 **PORTFOLIO HOLDINGS**
 {portfolio_summary}
 """
@@ -250,7 +283,11 @@ You are an expert, professional financial‑advisor AI specializing in Value and
         macro_section = "\n**MACRO ECONOMIC HEADLINES**\n"
         for i, article in enumerate(macro_news[:10], start=1):
             title = article.get("title", "").strip()
-            src = article.get("source", {}).get("name", "") if isinstance(article.get("source"), dict) else article.get("publisher", "")
+            src = (
+                article.get("source", {}).get("name", "")
+                if isinstance(article.get("source"), dict)
+                else article.get("publisher", "")
+            )
             macro_section += f"{i}. {title} ({src})\n"
         prompt += macro_section
 
@@ -374,7 +411,7 @@ def evaluate_portfolio(current_portfolio: dict, user_settings: dict):
 # ----------------------------------------------------------------------
 # 5️⃣  (Deprecated) Simple static version – kept for backward compatibility
 # ----------------------------------------------------------------------
-def evaluate_portfolio(current_portfolio: dict, user_settings: dict) -> str:
+def evaluate_portfolio_legacy(current_portfolio: dict, user_settings: dict) -> str:
     """
     Simple static version kept for backward‑compatibility.  It is superseded
     by the richer ``evaluate_portfolio`` implementation above.

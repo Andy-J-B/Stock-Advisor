@@ -18,15 +18,25 @@ console = Console()
 
 
 @app.callback(invoke_without_command=True)
-def main_setup(ctx: typer.Context):
+def main_setup(ctx: typer.Context, ticker: str = typer.Argument(None)):
+    """
+    If no subcommand is provided, treat the first argument as a stock ticker
+    for an immediate deep-dive research report.
+    """
     just_initialized = setup.initialize_app()
-    if ctx.invoked_subcommand is None and not just_initialized:
-        console.print(
-            Panel.fit(
-                "[bold blue]Welcome to your Terminal Stock Advisor[/bold blue]\n"
-                "Run [bold cyan]python main.py --help[/bold cyan] to see available commands."
+
+    if ctx.invoked_subcommand is None:
+        if ticker:
+            # Route to the research logic
+            research(ticker)
+        elif not just_initialized:
+            console.print(
+                Panel.fit(
+                    "[bold blue]Welcome to your Terminal Stock Advisor[/bold blue]\n"
+                    "Run [bold cyan]python main.py <TICKER>[/bold cyan] for a Deep-Dive.\n"
+                    "Run [bold cyan]python main.py --help[/bold cyan] for all commands."
+                )
             )
-        )
 
 
 @app.command()
@@ -387,26 +397,24 @@ def settings(
     console.print(table)
 
 
+# Ensure the existing research command is also available explicitly
 @app.command()
 def research(ticker: str):
-    """Feature 4: Get a deep-dive analyst report and action plan for a specific stock."""
+    """Get a deep-dive analyst report and action plan for a specific stock."""
     current_portfolio = portfolio.load()
 
     with console.status(
-        f"[bold cyan]Compiling Senior Analyst Report for {ticker.upper()}... This may take a few seconds.[/bold cyan]"
+        f"[bold cyan]Performing Ultimate Deep-Dive for {ticker.upper()}...[/bold cyan]"
     ):
         report_md = advisor.generate_stock_report(ticker, current_portfolio)
 
-    if "Error" in report_md or "not found" in report_md:
-        console.print(report_md)
-    else:
-        console.print(
-            Panel(
-                Markdown(report_md),
-                title=f"📈 Investment Thesis: {ticker.upper()}",
-                border_style="cyan",
-            )
+    console.print(
+        Panel(
+            Markdown(report_md),
+            title=f"📈 Senior Analyst Report: {ticker.upper()}",
+            border_style="bright_magenta",
         )
+    )
 
 
 if __name__ == "__main__":

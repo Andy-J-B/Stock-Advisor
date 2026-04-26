@@ -522,3 +522,43 @@ def generate_stock_report(ticker: str, current_portfolio: dict) -> str:
         return response.text
     except Exception as e:
         return f"Error contacting Gemini API: {e}"
+
+
+def generate_stock_report(ticker: str, current_portfolio: dict) -> str:
+    """Generates the Ultimate Stock Deep-Dive report using the Senior Analyst persona."""
+    metrics = get_advanced_metrics(ticker)
+
+    # Context: Is the user currently holding this?
+    accounts = current_portfolio.get("accounts", {})
+    position_info = "The client does not currently hold this stock."
+    for acc_data in accounts.values():
+        if ticker.upper() in acc_data.get("holdings", {}):
+            h = acc_data["holdings"][ticker.upper()]
+            position_info = f"Current Position: {h['shares']} shares at an average cost of ${h['avg_price']:.2f}."
+
+    news = get_ticker_news(ticker, limit=5)
+    news_text = "\n".join([f"- {n.get('title')} ({n.get('publisher')})" for n in news])
+
+    prompt = f"""
+Role: Act as a Senior Equity Research Analyst specializing in Value and Growth investing.
+Task: Conduct a comprehensive investment thesis and risk assessment for {ticker.upper()}.
+
+**DATA CONTEXT**
+- Live Financial Metrics: {json.dumps(metrics, indent=2)}
+- Recent News Headlines: {news_text}
+- Portfolio Context: {position_info}
+
+Please provide a detailed report covering these six pillars:
+
+1  **Company Profile & Moat:** What is their primary revenue model? What is their "Economic Moat"? Mention recent strategy shifts.
+2  **Financial Health & Key Stats:** Analyze the provided P/E, Debt-to-Equity, FCF, and Revenue Growth (YoY). Comment on dividend sustainability.
+3  **Analyst Sentiment & Institutional Ownership:** Summarize the consensus based on the analyst target and recommendation provided.
+4  **Macro-Economic State:** How do current interest rates and inflation specifically impact {ticker.upper()}'s sector? 
+5  **Technical Analysis & Entry Price:** Identify "Fair Value" and a "Margin of Safety" price (20% below intrinsic value).
+6  **Red Flags:** List the top 3 specific risks that could break the thesis over the next 12–24 months.
+
+**CONCLUSION:** Provide a definitive Verdict (Strong Buy, Buy, Hold, Sell) and a recommended Action Plan tailored to the Portfolio Context.
+"""
+
+    response = _gemini_generate(prompt)
+    return response if response else "AI Advisor is currently unavailable."

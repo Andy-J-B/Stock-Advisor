@@ -139,6 +139,9 @@ def view_portfolio(
         table.add_column("Shares", justify="right")
         table.add_column("Avg Price", justify="right")
         table.add_column("Live Price", justify="right", style="blue")
+        table.add_column("Day Change", justify="right")
+        table.add_column("Day Chg ($)", justify="right")
+        table.add_column("Total Value", justify="right", style="magenta")
         table.add_column("Return %", justify="right")
         table.add_column("Return $", justify="right")
 
@@ -155,7 +158,7 @@ def view_portfolio(
                 for ticker, data in holdings.items():
                     shares = data["shares"]
                     avg_price = data["avg_price"]
-                    live_price = data_client.get_current_price(ticker)
+                    live_price, prev_close = data_client.get_current_price(ticker)
 
                     cost = shares * avg_price
                     acc_cost_basis += cost
@@ -164,13 +167,29 @@ def view_portfolio(
                         value = shares * live_price
                         acc_market_value += value
 
+                        # All-time return calculations
                         diff = value - cost
                         pct = (diff / cost) * 100 if cost > 0 else 0
                         color = "green" if diff >= 0 else "red"
 
+                        # Intraday calculations
+                        if prev_close > 0:
+                            day_diff = live_price - prev_close
+                            day_pct = (day_diff / prev_close) * 100
+                        else:
+                            day_diff, day_pct = 0.0, 0.0
+
+                        total_day_diff = day_diff * shares
+                        day_color = "green" if day_diff >= 0 else "red"
+
                         ret_pct_str = f"[{color}]{pct:+.2f}%[/{color}]"
                         ret_dol_str = f"[{color}]{diff:+.2f}[/{color}]"
                         live_price_str = f"${live_price:.2f}"
+                        day_change_str = f"[{day_color}]{day_diff:+.2f} ({day_pct:+.2f}%)[/{day_color}]"
+                        day_chg_dol_str = (
+                            f"[{day_color}]{total_day_diff:+.2f}[/{day_color}]"
+                        )
+                        total_val_str = f"${value:,.2f}"
 
                         grand_total_value_cad += value * multiplier
                         grand_total_cost_cad += cost * multiplier
@@ -178,12 +197,18 @@ def view_portfolio(
                         ret_pct_str = "[yellow]N/A[/yellow]"
                         ret_dol_str = "[yellow]N/A[/yellow]"
                         live_price_str = "[yellow]Error[/yellow]"
+                        day_change_str = "[yellow]N/A[/yellow]"
+                        day_chg_dol_str = "[yellow]N/A[/yellow]"
+                        total_val_str = "[yellow]N/A[/yellow]"
 
                     table.add_row(
                         ticker,
                         str(shares),
                         f"${avg_price:.2f}",
                         live_price_str,
+                        day_change_str,
+                        day_chg_dol_str,
+                        total_val_str,
                         ret_pct_str,
                         ret_dol_str,
                     )

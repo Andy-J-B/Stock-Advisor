@@ -30,12 +30,18 @@ def get_usd_to_cad() -> float:
 
 
 @cache.memoize(expire=300)
-def get_current_price(ticker: str) -> float:
+def get_current_price(ticker: str) -> tuple[float, float]:
+    """Returns a tuple of (current_price, previous_close)"""
     try:
         stock = yf.Ticker(ticker)
-        return round(stock.fast_info["lastPrice"], 2)
+        current = round(stock.fast_info["lastPrice"], 2)
+        try:
+            prev_close = round(stock.fast_info["previousClose"], 2)
+        except KeyError:
+            prev_close = current  # Fallback to avoid division by zero errors
+        return current, prev_close
     except Exception:
-        return 0.0
+        return 0.0, 0.0
 
 
 @cache.memoize(expire=86400)

@@ -456,11 +456,8 @@ def evaluate_portfolio_legacy(current_portfolio: dict, user_settings: dict) -> s
     return advice
 
 
-# Add this function to src/advisor.py
-
-
 @cache.memoize(expire=43200)
-def generate_stock_report(ticker: str, current_portfolio: dict) -> str:
+def generate_stock_old_report(ticker: str, current_portfolio: dict) -> str:
     """Generates a comprehensive investment thesis using hard data."""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:

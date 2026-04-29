@@ -1,7 +1,5 @@
-import os
 from dotenv import load_dotenv
 
-load_dotenv()
 
 import plotext as plt
 from textual import work
@@ -10,6 +8,8 @@ from textual.widgets import Header, Footer, DataTable, Markdown, Static, Label
 from textual.containers import Horizontal, Vertical, VerticalScroll
 
 from src import portfolio, advisor
+
+load_dotenv()
 
 
 class PlotextChart(Static):

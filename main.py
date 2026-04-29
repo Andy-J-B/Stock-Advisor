@@ -4,10 +4,9 @@ from rich.table import Table
 from rich.panel import Panel
 from dotenv import load_dotenv
 from rich.markdown import Markdown
+from src import setup, portfolio, advisor, config, data_client
 
 load_dotenv()
-
-from src import setup, portfolio, advisor, config, data_client
 
 app = typer.Typer(
     name="Stock Advisor",

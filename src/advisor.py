@@ -559,6 +559,5 @@ Please provide a detailed report covering these six pillars:
 
 **CONCLUSION:** Provide a definitive Verdict (Strong Buy, Buy, Hold, Sell) and a recommended Action Plan tailored to the Portfolio Context.
 """
-
     response = _gemini_generate(prompt)
     return response if response else "AI Advisor is currently unavailable."

@@ -118,6 +118,7 @@ def view_portfolio(
     grand_total_cost_cad = 0.0
     grand_total_cash_cad = 0.0
     grand_total_initial_cad = 0.0
+    grand_total_day_chg_cad = 0.0
 
     for acc_name in accounts_to_show:
         if acc_name not in accounts:
@@ -147,6 +148,7 @@ def view_portfolio(
 
         acc_cost_basis = 0.0
         acc_market_value = 0.0
+        acc_day_chg_dol = 0.0
 
         if not holdings:
             console.print(f"\n[bold yellow]--- {acc_name} Account ---[/bold yellow]")
@@ -180,6 +182,8 @@ def view_portfolio(
                             day_diff, day_pct = 0.0, 0.0
 
                         total_day_diff = day_diff * shares
+                        acc_day_chg_dol += total_day_diff
+
                         day_color = "green" if day_diff >= 0 else "red"
 
                         ret_pct_str = f"[{color}]{pct:+.2f}%[/{color}]"
@@ -193,6 +197,7 @@ def view_portfolio(
 
                         grand_total_value_cad += value * multiplier
                         grand_total_cost_cad += cost * multiplier
+                        grand_total_day_chg_cad += total_day_diff * multiplier
                     else:
                         ret_pct_str = "[yellow]N/A[/yellow]"
                         ret_dol_str = "[yellow]N/A[/yellow]"
@@ -222,6 +227,13 @@ def view_portfolio(
             )
             ret_color = "green" if acc_ret_dol >= 0 else "red"
 
+            # Calculate today's return % (based on yesterday's total value)
+            acc_prev_value = acc_market_value - acc_day_chg_dol
+            acc_day_chg_pct = (
+                (acc_day_chg_dol / acc_prev_value * 100) if acc_prev_value > 0 else 0
+            )
+            day_ret_color = "green" if acc_day_chg_dol >= 0 else "red"
+
             total_acc_value = acc_market_value + cash
             all_time_ret_dol = total_acc_value - initial_cash
             all_time_ret_pct = (
@@ -234,6 +246,9 @@ def view_portfolio(
             )
             console.print(
                 f"  [bold]Cash Balance:[/bold]        [white]${cash:,.2f}[/white]"
+            )
+            console.print(
+                f"  [bold]Today's Return:[/bold]      [{day_ret_color}]${acc_day_chg_dol:,.2f} ({acc_day_chg_pct:+.2f}%)[/{day_ret_color}]"
             )
             console.print(
                 f"  [bold]Holdings Return:[/bold]     [{ret_color}]${acc_ret_dol:,.2f} ({acc_ret_pct:+.2f}%)[/{ret_color}]"
@@ -255,6 +270,15 @@ def view_portfolio(
         )
         global_color = "green" if global_ret_dol >= 0 else "red"
 
+        # Calculate global day change
+        global_prev_value = grand_total_value_cad - grand_total_day_chg_cad
+        global_day_chg_pct = (
+            (grand_total_day_chg_cad / global_prev_value * 100)
+            if global_prev_value > 0
+            else 0
+        )
+        global_day_color = "green" if grand_total_day_chg_cad >= 0 else "red"
+
         net_worth = grand_total_value_cad + grand_total_cash_cad
 
         global_all_time_dol = net_worth - grand_total_initial_cad
@@ -274,6 +298,10 @@ def view_portfolio(
             "Total Initial Invested", f"${grand_total_initial_cad:,.2f}"
         )
         summary_table.add_row("Total Combined Cash", f"${grand_total_cash_cad:,.2f}")
+        summary_table.add_row(
+            "Today's Return",
+            f"[{global_day_color}]${grand_total_day_chg_cad:,.2f} ({global_day_chg_pct:+.2f}%)[/{global_day_color}]",
+        )
         summary_table.add_row(
             "Active Holdings Return",
             f"[{global_color}]${global_ret_dol:,.2f} ({global_ret_pct:+.2f}%)[/{global_color}]",

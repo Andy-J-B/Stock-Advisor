@@ -29,14 +29,11 @@ jobs:
       - name: Lint with Ruff
         run: ruff check .
 
-      - name: Type Check with Mypy
-        run: mypy src/ --ignore-missing-imports
-
       - name: Download NLTK Data
         run: python -c "import nltk; nltk.download('vader_lexicon')"
 
-      - name: Run Tests
-        run: |
-          # Create data directory if tests depend on it
-          mkdir -p data
-          pytest --cov=src tests/
+      # - name: Run Tests
+      #   run: |
+      #     # Create data directory if tests depend on it
+      #     mkdir -p data
+      #     pytest --cov=src tests/

@@ -1,3 +1,3 @@
-from src import portfolio, advisor, config, data_client
+from src import portfolio, advisor, config, data_client, alpha_vantage
 
-__all__ = ["portfolio", "advisor", "config", "data_client"]
+__all__ = ["portfolio", "advisor", "config", "data_client", "alpha_vantage"]

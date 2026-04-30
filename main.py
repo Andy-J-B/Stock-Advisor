@@ -4,7 +4,7 @@ from rich.table import Table
 from rich.panel import Panel
 from dotenv import load_dotenv
 from rich.markdown import Markdown
-from src import setup, portfolio, advisor, config, data_client
+from src import setup, portfolio, advisor, config, data_client, alpha_vantage
 
 load_dotenv()
 

@@ -372,8 +372,8 @@ def evaluate_portfolio(current_portfolio: dict, user_settings: dict):
         tk.upper() for acc in accounts.values() for tk in acc.get("holdings", {}).keys()
     }
 
-    ticker_news: Dict[str, List[Dict[str, Any]]] = {}
-    sector_map: Dict[str, str] = {}
+    ticker_news: dict[str, List[dict[str, Any]]] = {}
+    sector_map: dict[str, str] = {}
     for t in tickers:
         # news + sentiment (Alpha)
         ticker_news[t] = av_get_ticker_news(t, limit=3)

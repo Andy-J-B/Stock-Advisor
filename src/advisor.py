@@ -256,10 +256,11 @@ def evaluate_portfolio(current_portfolio: dict, user_settings: dict):
             sector_exposure[sector] = sector_exposure.get(sector, 0.0) + pos_value
 
     # normalise to percentages for the prompt
-    for sector in sector_exposure:
-        sector_exposure[sector] = round(
-            100 * sector_exposure[sector] / total_portfolio_value, 2
-        )
+    if total_portfolio_value > 0:
+        for sector in sector_exposure:
+            sector_exposure[sector] = round(
+                100 * sector_exposure[sector] / total_portfolio_value, 2
+            )
 
     # ------------------------------------------------------------------
     # Build the big Gemini prompt

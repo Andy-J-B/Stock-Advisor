@@ -553,7 +553,7 @@ def rebalance():
     with console.status("[bold cyan]Generating rebalancing suggestions...[/bold cyan]"):
         suggestions = advisor.evaluate_portfolio(current_portfolio, user_settings)
 
-    console.print(Panel(Markdown(str(suggestions)), title="🧹 Rebalancing Suggestions", border_style="green"))
+    console.print(Panel(suggestions, title="🧹 Rebalancing Suggestions", border_style="green"))
 
 
 @app.command()

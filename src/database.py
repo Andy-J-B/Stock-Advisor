@@ -61,15 +61,18 @@ class Setting(BaseModel):
     value = TextField()
 
 
-def init_db():
+def init_db(skip_migration: bool = False):
     if db.is_closed():
         db.connect()
     db.create_tables([Account, Holding, Transaction, NetWorthSnapshot, Setting], safe=True)
-    _migrate_from_json()
+    if not skip_migration:
+        _migrate_from_json()
 
 
 def _migrate_from_json():
     """One-time migration of existing JSON data into SQLite."""
+    if db.database != str(DATA_DIR / "portfolio.db"):
+        return
     if Account.select().count() > 0:
         return
 

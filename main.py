@@ -1,10 +1,12 @@
+import csv
+import io
 import typer
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from dotenv import load_dotenv
 from rich.markdown import Markdown
-from src import setup, portfolio, advisor, config, data_client
+from src import setup, portfolio, advisor, config, data_client, __version__
 
 load_dotenv()
 
@@ -17,11 +19,14 @@ console = Console()
 
 
 @app.callback(invoke_without_command=True)
-def main_setup(ctx: typer.Context):
-    """
-    If no subcommand is provided, treat the first argument as a stock ticker
-    for an immediate deep-dive research report.
-    """
+def main_setup(
+    ctx: typer.Context,
+    version: bool = typer.Option(False, "--version", "-V", help="Show version and exit.", is_eager=True),
+):
+    if version:
+        console.print(f"Stock Advisor v{__version__}")
+        raise typer.Exit()
+
     just_initialized = setup.initialize_app()
 
     if ctx.invoked_subcommand is None and not just_initialized:
@@ -32,6 +37,130 @@ def main_setup(ctx: typer.Context):
             )
         )
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _confirm(msg: str) -> bool:
+    return typer.confirm(f"[yellow]{msg}[/yellow]", default=False)
+
+
+def _price_color(diff: float) -> str:
+    return "green" if diff >= 0 else "red"
+
+
+def _pct_str(pct: float) -> str:
+    return f"{pct:+.2f}%"
+
+
+def _dol_str(val: float) -> str:
+    return f"${val:,.2f}"
+
+
+def _colorize(val: float, fmt: str) -> str:
+    color = _price_color(val)
+    return f"[{color}]{fmt.format(val)}[/{color}]"
+
+
+def _build_holding_row(ticker: str, shares: float, avg_price: float, live_price: float, prev_close: float):
+    cost = shares * avg_price
+    value = shares * live_price
+    diff = value - cost
+
+    if prev_close > 0:
+        day_diff = live_price - prev_close
+        day_pct = (day_diff / prev_close) * 100
+    else:
+        day_diff = day_pct = 0.0
+
+    total_day_diff = day_diff * shares
+    day_color = _price_color(day_diff)
+    ret_pct_str = _colorize(diff, "{:+.2f}%")
+    ret_dol_str = _colorize(diff, "{:+.2f}")
+
+    row = [
+        ticker,
+        str(shares),
+        f"${avg_price:.2f}",
+        f"${live_price:.2f}" if live_price > 0 else "[yellow]N/A[/yellow]",
+        f"[{day_color}]{day_diff:+.2f} ({_pct_str(day_pct)})[/{day_color}]",
+        f"[{day_color}]{total_day_diff:+.2f}[/{day_color}]",
+        f"${value:,.2f}" if live_price > 0 else "[yellow]N/A[/yellow]",
+        ret_pct_str if live_price > 0 else "[yellow]N/A[/yellow]",
+        ret_dol_str if live_price > 0 else "[yellow]N/A[/yellow]",
+    ]
+    metrics = {
+        "cost": cost,
+        "value": value if live_price > 0 else 0,
+        "day_chg": total_day_diff if live_price > 0 else 0,
+    }
+    return row, metrics
+
+
+def _build_account_table(acc_name: str, multiplier: float):
+    table = Table(
+        title=f"[bold cyan]{acc_name} Portfolio[/bold cyan] (FX: {multiplier:.4f})"
+    )
+    table.add_column("Ticker", style="cyan", no_wrap=True)
+    table.add_column("Shares", justify="right")
+    table.add_column("Avg Price", justify="right")
+    table.add_column("Live Price", justify="right", style="blue")
+    table.add_column("Day Change", justify="right")
+    table.add_column("Day Chg ($)", justify="right")
+    table.add_column("Total Value", justify="right", style="magenta")
+    table.add_column("Return %", justify="right")
+    table.add_column("Return $", justify="right")
+    return table
+
+
+def _print_account_summary(cash: float, initial_cash: float, cost: float, value: float, day_chg: float):
+    ret_dol = value - cost
+    ret_pct = (ret_dol / cost * 100) if cost > 0 else 0
+    prev_value = value - day_chg
+    day_pct = (day_chg / prev_value * 100) if prev_value > 0 else 0
+    total_val = value + cash
+    all_time_dol = total_val - initial_cash
+    all_time_pct = (all_time_dol / initial_cash * 100) if initial_cash > 0 else 0
+
+    console.print(f"  [bold]Initial Investment:[/bold]  [white]{_dol_str(initial_cash)}[/white]")
+    console.print(f"  [bold]Cash Balance:[/bold]        [white]{_dol_str(cash)}[/white]")
+    console.print(f"  [bold]Today's Return:[/bold]      {_colorize(day_chg, '{:,.2f}')} ({_colorize(day_pct, '{:+.2f}%')})")
+    console.print(f"  [bold]Holdings Return:[/bold]     {_colorize(ret_dol, '{:,.2f}')} ({_colorize(ret_pct, '{:+.2f}%')})")
+    console.print(f"  [bold]All-Time Return:[/bold]     {_colorize(all_time_dol, '{:,.2f}')} ({_colorize(all_time_pct, '{:+.2f}%')})")
+    console.print(f"  [bold]Total Account Value:[/bold] [cyan]{_dol_str(total_val)}[/cyan]\n")
+
+    return {
+        "value_cad": value,
+        "cost_cad": cost,
+        "day_chg_cad": day_chg,
+        "cash_cad": cash,
+        "initial_cad": initial_cash,
+    }
+
+
+def _print_global_summary(grand: dict):
+    ret_dol = grand["value"] - grand["cost"]
+    ret_pct = (ret_dol / grand["cost"] * 100) if grand["cost"] > 0 else 0
+    prev = grand["value"] - grand["day_chg"]
+    day_pct = (grand["day_chg"] / prev * 100) if prev > 0 else 0
+    net_worth = grand["value"] + grand["cash"]
+    all_time_dol = net_worth - grand["initial"]
+    all_time_pct = (all_time_dol / grand["initial"] * 100) if grand["initial"] > 0 else 0
+
+    t = Table(show_header=False, border_style="bright_blue", title="[bold blue]GLOBAL PORTFOLIO SUMMARY (CAD)[/bold blue]")
+    t.add_row("Total Initial Invested", _dol_str(grand["initial"]))
+    t.add_row("Total Combined Cash", _dol_str(grand["cash"]))
+    t.add_row("Today's Return", _colorize(grand["day_chg"], "{:,.2f}") + f" ({_colorize(day_pct, '{:+.2f}%')})")
+    t.add_row("Active Holdings Return", _colorize(ret_dol, "{:,.2f}") + f" ({_colorize(ret_pct, '{:+.2f}%')})")
+    t.add_row("All-Time Global Return", _colorize(all_time_dol, "{:,.2f}") + f" ({_colorize(all_time_pct, '{:+.2f}%')})")
+    t.add_row("NET WORTH", f"[bold cyan]{_dol_str(net_worth)}[/bold cyan]")
+    console.print(Panel(t, expand=False))
+
+
+# ---------------------------------------------------------------------------
+# Commands – Portfolio Management
+# ---------------------------------------------------------------------------
 
 @app.command()
 def deposit(
@@ -58,6 +187,8 @@ def sell_stock(
     account: str = typer.Option("USD", "--account", "-a"),
 ):
     """Sell stock and convert proceeds to CAD cash."""
+    if not _confirm(f"Sell {shares} shares of {ticker.upper()} at ${price:.2f}?"):
+        raise typer.Exit()
     try:
         with console.status("[bold red]Processing sale...[/bold red]"):
             proceeds, rate = portfolio.sell_position(account, ticker, shares, price)
@@ -78,6 +209,8 @@ def set_initial_cmd(
     ),
 ):
     """Set the initial cash investment amount for an account to track all-time returns."""
+    if not _confirm(f"Set initial investment for {account.upper()} to ${amount:,.2f}?"):
+        raise typer.Exit()
     portfolio.set_initial_cash(account, amount)
     console.print(
         f"[bold green]Successfully set {account.upper()} initial investment to ${amount:,.2f}[/bold green]"
@@ -91,227 +224,64 @@ def view_portfolio(
     )
 ):
     """View portfolio with live market prices, currency conversion, and total returns."""
-    # Run ensure_account_exists indirectly via loading to patch old JSON files
     current_portfolio = portfolio.load()
     for acc in ["USD", "CAD"]:
         portfolio.ensure_account_exists(current_portfolio, acc)
-
-    current_portfolio = portfolio.load()  # Reload patched data
+    portfolio.save(current_portfolio)
     accounts = current_portfolio.get("accounts", {})
 
     if not accounts:
-        console.print(
-            "[yellow]No accounts found. Use 'add-stock' to get started.[/yellow]"
-        )
+        console.print("[yellow]No accounts found. Use 'add-stock' to get started.[/yellow]")
         return
 
     with console.status("[bold green]Fetching live exchange rates...[/bold green]"):
         fx_rate = data_client.get_usd_to_cad()
 
-    accounts_to_show = (
-        [account.upper()] if account.upper() != "ALL" else accounts.keys()
-    )
+    accounts_to_show = [account.upper()] if account.upper() != "ALL" else list(accounts.keys())
 
-    # Grand totals (Normalized to CAD)
-    grand_total_value_cad = 0.0
-    grand_total_cost_cad = 0.0
-    grand_total_cash_cad = 0.0
-    grand_total_initial_cad = 0.0
-    grand_total_day_chg_cad = 0.0
+    grand = {"value": 0.0, "cost": 0.0, "cash": 0.0, "initial": 0.0, "day_chg": 0.0}
 
     for acc_name in accounts_to_show:
         if acc_name not in accounts:
             console.print(f"[red]Account '{acc_name}' not found.[/red]")
             continue
 
-        holdings = accounts[acc_name].get("holdings", {})
-        cash = accounts[acc_name].get("cash", 0.0)
-        initial_cash = accounts[acc_name].get("initial_cash", 0.0)
-
+        acc_data = accounts[acc_name]
+        holdings = acc_data.get("holdings", {})
+        cash = acc_data.get("cash", 0.0)
+        initial_cash = acc_data.get("initial_cash", 0.0)
         multiplier = fx_rate if acc_name == "USD" else 1.0
-        grand_total_cash_cad += cash * multiplier
-        grand_total_initial_cad += initial_cash * multiplier
 
-        table = Table(
-            title=f"[bold cyan]{acc_name} Portfolio[/bold cyan] (FX: {multiplier:.4f})"
-        )
-        table.add_column("Ticker", style="cyan", no_wrap=True)
-        table.add_column("Shares", justify="right")
-        table.add_column("Avg Price", justify="right")
-        table.add_column("Live Price", justify="right", style="blue")
-        table.add_column("Day Change", justify="right")
-        table.add_column("Day Chg ($)", justify="right")
-        table.add_column("Total Value", justify="right", style="magenta")
-        table.add_column("Return %", justify="right")
-        table.add_column("Return $", justify="right")
-
-        acc_cost_basis = 0.0
-        acc_market_value = 0.0
-        acc_day_chg_dol = 0.0
+        grand["cash"] += cash * multiplier
+        grand["initial"] += initial_cash * multiplier
 
         if not holdings:
             console.print(f"\n[bold yellow]--- {acc_name} Account ---[/bold yellow]")
             console.print(f"No holdings. Cash: ${cash:,.2f}")
-        else:
-            with console.status(
-                f"[bold green]Pricing {acc_name} holdings...[/bold green]"
-            ):
-                for ticker, data in holdings.items():
-                    shares = data["shares"]
-                    avg_price = data["avg_price"]
-                    live_price, prev_close = data_client.get_current_price(ticker)
+            continue
 
-                    cost = shares * avg_price
-                    acc_cost_basis += cost
+        table = _build_account_table(acc_name, multiplier)
+        acc_cost = acc_market = acc_day = 0.0
 
-                    if live_price > 0:
-                        value = shares * live_price
-                        acc_market_value += value
+        with console.status(f"[bold green]Pricing {acc_name} holdings...[/bold green]"):
+            for ticker, data in holdings.items():
+                live_price, prev_close = data_client.get_current_price(ticker)
+                row, metrics = _build_holding_row(
+                    ticker, data["shares"], data["avg_price"], live_price, prev_close
+                )
+                table.add_row(*row)
+                acc_cost += metrics["cost"]
+                acc_market += metrics["value"]
+                acc_day += metrics["day_chg"]
+                grand["value"] += metrics["value"] * multiplier
+                grand["cost"] += metrics["cost"] * multiplier
+                grand["day_chg"] += metrics["day_chg"] * multiplier
 
-                        # All-time return calculations
-                        diff = value - cost
-                        pct = (diff / cost) * 100 if cost > 0 else 0
-                        color = "green" if diff >= 0 else "red"
+        console.print(table)
+        _print_account_summary(cash, initial_cash, acc_cost, acc_market, acc_day)
 
-                        # Intraday calculations
-                        if prev_close > 0:
-                            day_diff = live_price - prev_close
-                            day_pct = (day_diff / prev_close) * 100
-                        else:
-                            day_diff, day_pct = 0.0, 0.0
-
-                        total_day_diff = day_diff * shares
-                        acc_day_chg_dol += total_day_diff
-
-                        day_color = "green" if day_diff >= 0 else "red"
-
-                        ret_pct_str = f"[{color}]{pct:+.2f}%[/{color}]"
-                        ret_dol_str = f"[{color}]{diff:+.2f}[/{color}]"
-                        live_price_str = f"${live_price:.2f}"
-                        day_change_str = f"[{day_color}]{day_diff:+.2f} ({day_pct:+.2f}%)[/{day_color}]"
-                        day_chg_dol_str = (
-                            f"[{day_color}]{total_day_diff:+.2f}[/{day_color}]"
-                        )
-                        total_val_str = f"${value:,.2f}"
-
-                        grand_total_value_cad += value * multiplier
-                        grand_total_cost_cad += cost * multiplier
-                        grand_total_day_chg_cad += total_day_diff * multiplier
-                    else:
-                        ret_pct_str = "[yellow]N/A[/yellow]"
-                        ret_dol_str = "[yellow]N/A[/yellow]"
-                        live_price_str = "[yellow]Error[/yellow]"
-                        day_change_str = "[yellow]N/A[/yellow]"
-                        day_chg_dol_str = "[yellow]N/A[/yellow]"
-                        total_val_str = "[yellow]N/A[/yellow]"
-
-                    table.add_row(
-                        ticker,
-                        str(shares),
-                        f"${avg_price:.2f}",
-                        live_price_str,
-                        day_change_str,
-                        day_chg_dol_str,
-                        total_val_str,
-                        ret_pct_str,
-                        ret_dol_str,
-                    )
-
-            console.print(table)
-
-            # Account-specific summary
-            acc_ret_dol = acc_market_value - acc_cost_basis
-            acc_ret_pct = (
-                (acc_ret_dol / acc_cost_basis * 100) if acc_cost_basis > 0 else 0
-            )
-            ret_color = "green" if acc_ret_dol >= 0 else "red"
-
-            # Calculate today's return % (based on yesterday's total value)
-            acc_prev_value = acc_market_value - acc_day_chg_dol
-            acc_day_chg_pct = (
-                (acc_day_chg_dol / acc_prev_value * 100) if acc_prev_value > 0 else 0
-            )
-            day_ret_color = "green" if acc_day_chg_dol >= 0 else "red"
-
-            total_acc_value = acc_market_value + cash
-            all_time_ret_dol = total_acc_value - initial_cash
-            all_time_ret_pct = (
-                (all_time_ret_dol / initial_cash * 100) if initial_cash > 0 else 0
-            )
-            all_time_color = "green" if all_time_ret_dol >= 0 else "red"
-
-            console.print(
-                f"  [bold]Initial Investment:[/bold]  [white]${initial_cash:,.2f}[/white]"
-            )
-            console.print(
-                f"  [bold]Cash Balance:[/bold]        [white]${cash:,.2f}[/white]"
-            )
-            console.print(
-                f"  [bold]Today's Return:[/bold]      [{day_ret_color}]${acc_day_chg_dol:,.2f} ({acc_day_chg_pct:+.2f}%)[/{day_ret_color}]"
-            )
-            console.print(
-                f"  [bold]Holdings Return:[/bold]     [{ret_color}]${acc_ret_dol:,.2f} ({acc_ret_pct:+.2f}%)[/{ret_color}]"
-            )
-            console.print(
-                f"  [bold]All-Time Return:[/bold]     [{all_time_color}]${all_time_ret_dol:,.2f} ({all_time_ret_pct:+.2f}%)[/{all_time_color}]"
-            )
-            console.print(
-                f"  [bold]Total Account Value:[/bold] [cyan]${total_acc_value:,.2f}[/cyan]\n"
-            )
-
-    # Global Summary Panel
-    if len(accounts_to_show) > 0:
-        global_ret_dol = grand_total_value_cad - grand_total_cost_cad
-        global_ret_pct = (
-            (global_ret_dol / grand_total_cost_cad * 100)
-            if grand_total_cost_cad > 0
-            else 0
-        )
-        global_color = "green" if global_ret_dol >= 0 else "red"
-
-        # Calculate global day change
-        global_prev_value = grand_total_value_cad - grand_total_day_chg_cad
-        global_day_chg_pct = (
-            (grand_total_day_chg_cad / global_prev_value * 100)
-            if global_prev_value > 0
-            else 0
-        )
-        global_day_color = "green" if grand_total_day_chg_cad >= 0 else "red"
-
-        net_worth = grand_total_value_cad + grand_total_cash_cad
-
-        global_all_time_dol = net_worth - grand_total_initial_cad
-        global_all_time_pct = (
-            (global_all_time_dol / grand_total_initial_cad * 100)
-            if grand_total_initial_cad > 0
-            else 0
-        )
-        global_all_time_color = "green" if global_all_time_dol >= 0 else "red"
-
-        summary_table = Table(
-            show_header=False,
-            border_style="bright_blue",
-            title="[bold blue]GLOBAL PORTFOLIO SUMMARY (CAD)[/bold blue]",
-        )
-        summary_table.add_row(
-            "Total Initial Invested", f"${grand_total_initial_cad:,.2f}"
-        )
-        summary_table.add_row("Total Combined Cash", f"${grand_total_cash_cad:,.2f}")
-        summary_table.add_row(
-            "Today's Return",
-            f"[{global_day_color}]${grand_total_day_chg_cad:,.2f} ({global_day_chg_pct:+.2f}%)[/{global_day_color}]",
-        )
-        summary_table.add_row(
-            "Active Holdings Return",
-            f"[{global_color}]${global_ret_dol:,.2f} ({global_ret_pct:+.2f}%)[/{global_color}]",
-        )
-        summary_table.add_row(
-            "All-Time Global Return",
-            f"[{global_all_time_color}]${global_all_time_dol:,.2f} ({global_all_time_pct:+.2f}%)[/{global_all_time_color}]",
-        )
-        summary_table.add_row("NET WORTH", f"[bold cyan]${net_worth:,.2f}[/bold cyan]")
-
-        console.print(Panel(summary_table, expand=False))
+    if accounts_to_show:
+        _print_global_summary(grand)
 
 
 @app.command()
@@ -338,6 +308,8 @@ def update_cash_cmd(
     ),
 ):
     """Update the available buying power (cash) in an account."""
+    if not _confirm(f"Update {account.upper()} cash balance to ${amount:,.2f}?"):
+        raise typer.Exit()
     portfolio.update_cash(account, amount)
     console.print(
         f"[bold green]Successfully updated {account.upper()} buying power to ${amount:,.2f}[/bold green]"
@@ -351,6 +323,9 @@ def remove_stock(
     account: str = typer.Option("USD", "--account", "-a", help="Account to remove from (e.g., USD, CAD)"),
 ):
     """Remove a stock position (or partial shares) from your portfolio."""
+    label = f"Remove entire position of {ticker.upper()}" if not shares else f"Remove {shares} shares of {ticker.upper()}"
+    if not _confirm(f"{label} from {account.upper()}?"):
+        raise typer.Exit()
     try:
         portfolio.remove_position(account, ticker, shares)
         if shares:
@@ -361,25 +336,26 @@ def remove_stock(
         console.print(f"[red]Error: {e}[/red]")
 
 
+# ---------------------------------------------------------------------------
+# Commands – Analysis & Advice
+# ---------------------------------------------------------------------------
+
 @app.command()
 def analyze():
-    """Feature 1: Analyze current holdings against your risk profile."""
+    """Analyze current holdings against your risk profile."""
     console.print("[bold blue]Analyzing portfolio...[/bold blue]")
 
     user_settings = config.load_settings()
     current_portfolio = portfolio.load()
 
     accounts = current_portfolio.get("accounts", {})
-    has_assets = False
-    for acc_name, acc_data in accounts.items():
-        if acc_data.get("holdings") or acc_data.get("cash", 0) > 0:
-            has_assets = True
-            break
+    has_assets = any(
+        acc_data.get("holdings") or acc_data.get("cash", 0) > 0
+        for acc_data in accounts.values()
+    )
 
     if not has_assets:
-        console.print(
-            "[yellow]Please add stocks or cash to your portfolio first![/yellow]"
-        )
+        console.print("[yellow]Please add stocks or cash to your portfolio first![/yellow]")
         return
 
     with console.status("[bold cyan]Consulting AI Advisor...[/bold cyan]"):
@@ -390,7 +366,7 @@ def analyze():
 
 @app.command()
 def market_update():
-    """Feature 2: Get general market recommendations based on today's news."""
+    """Get general market recommendations based on today's news."""
     with console.status("[bold green]Fetching latest market news...[/bold green]"):
         news = data_client.get_macro_news()
 
@@ -402,7 +378,7 @@ def market_update():
 
 @app.command()
 def portfolio_news():
-    """Feature 3: Get recommendations for your specific stocks based on recent news."""
+    """Get recommendations for your specific stocks based on recent news."""
     current_portfolio = portfolio.load()
     tickers = []
     for acc in current_portfolio.get("accounts", {}).values():
@@ -467,9 +443,7 @@ def settings(
 
         total = c + m + a
         if total != 100:
-            console.print(
-                f"[red]Error: Your allocation totals {total}%. It must equal exactly 100%.[/red]"
-            )
+            console.print(f"[red]Error: Your allocation totals {total}%. It must equal exactly 100%.[/red]")
             raise typer.Exit(code=1)
 
         config.update_allocation(c, m, a)
@@ -488,34 +462,105 @@ def settings(
     console.print(table)
 
 
-# Ensure the existing research command is also available explicitly
 @app.command()
 def research(ticker: str):
     """Get a deep-dive analyst report and action plan for a specific stock."""
     current_portfolio = portfolio.load()
+    with console.status(f"[bold cyan]Performing Ultimate Deep-Dive for {ticker.upper()}...[/bold cyan]"):
+        report_md = advisor.generate_stock_report(ticker, current_portfolio)
 
-    if ticker:
-        # Route to the research logic
-        with console.status(
-            f"[bold cyan]Performing Ultimate Deep-Dive for {ticker.upper()}...[/bold cyan]"
-        ):
-            report_md = advisor.generate_stock_report(ticker, current_portfolio)
+    console.print(
+        Panel(
+            Markdown(report_md),
+            title=f"📈 Senior Analyst Report: {ticker.upper()}",
+            border_style="bright_magenta",
+        )
+    )
 
-        console.print(
-            Panel(
-                Markdown(report_md),
-                title=f"📈 Senior Analyst Report: {ticker.upper()}",
-                border_style="bright_magenta",
-            )
-        )
-    else:
-        console.print(
-            Panel.fit(
-                "[bold blue]Welcome to your Terminal Stock Advisor[/bold blue]\n"
-                "Run [bold cyan]python main.py <TICKER>[/bold cyan] for a Deep-Dive.\n"
-                "Run [bold cyan]python main.py --help[/bold cyan] for all commands."
-            )
-        )
+
+# ---------------------------------------------------------------------------
+# Commands – New Features (P3)
+# ---------------------------------------------------------------------------
+
+@app.command()
+def export(
+    account: str = typer.Option("ALL", "--account", "-a", help="Account to export"),
+):
+    """Export portfolio holdings to CSV."""
+    current_portfolio = portfolio.load()
+    accounts = current_portfolio.get("accounts", {})
+    accs = [account.upper()] if account.upper() != "ALL" else list(accounts.keys())
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Account", "Ticker", "Shares", "Avg Price"])
+
+    for acc_name in accs:
+        for ticker, data in accounts.get(acc_name, {}).get("holdings", {}).items():
+            writer.writerow([acc_name, ticker, data["shares"], data["avg_price"]])
+
+    csv_content = output.getvalue()
+    console.print(csv_content)
+    console.print(f"[green]Exported {len(accs)} account(s) to CSV above.[/green]")
+
+
+@app.command()
+def dividends():
+    """Show projected annual dividend income from your holdings."""
+    current_portfolio = portfolio.load()
+    total_projected = 0.0
+    table = Table(title="Projected Annual Dividend Income")
+    table.add_column("Ticker", style="cyan")
+    table.add_column("Shares", justify="right")
+    table.add_column("Div/Yield", justify="right")
+    table.add_column("Annual Income", justify="right")
+
+    with console.status("[bold green]Fetching dividend data...[/bold green]"):
+        for acc in current_portfolio.get("accounts", {}).values():
+            for ticker, data in acc.get("holdings", {}).items():
+                info = data_client.get_ticker_info(ticker)
+                div_yield = info.get("dividendYield", 0) or 0
+                div = info.get("dividendRate", 0) or 0
+
+                if div > 0:
+                    annual = div * data["shares"]
+                    total_projected += annual
+                    table.add_row(
+                        ticker, str(data["shares"]),
+                        f"{div_yield*100:.2f}%" if div_yield else "N/A",
+                        f"${annual:,.2f}",
+                    )
+
+    console.print(table)
+    console.print(f"\n[bold]Total Projected Annual Income:[/bold] [green]${total_projected:,.2f}[/green]")
+
+
+@app.command()
+def rebalance():
+    """Get AI-powered rebalancing suggestions for your portfolio."""
+    current_portfolio = portfolio.load()
+    user_settings = config.load_settings()
+
+    accounts = current_portfolio.get("accounts", {})
+    has_assets = any(
+        acc_data.get("holdings") or acc_data.get("cash", 0) > 0
+        for acc_data in accounts.values()
+    )
+    if not has_assets:
+        console.print("[yellow]Your portfolio is empty. Nothing to rebalance.[/yellow]")
+        return
+
+    with console.status("[bold cyan]Generating rebalancing suggestions...[/bold cyan]"):
+        suggestions = advisor.evaluate_portfolio(current_portfolio, user_settings)
+
+    console.print(Panel(Markdown(str(suggestions)), title="🧹 Rebalancing Suggestions", border_style="green"))
+
+
+@app.command()
+def tui():
+    """Launch the Textual Terminal UI dashboard."""
+    from tui import StockDashboard
+    StockDashboard().run()
 
 
 if __name__ == "__main__":

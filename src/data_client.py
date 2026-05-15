@@ -45,6 +45,15 @@ def get_usd_to_cad() -> float:
         return 1.35
 
 
+@cache.memoize(expire=86400)
+def get_ticker_info(ticker: str) -> dict:
+    """Returns the full yfinance info dict for a ticker (cached 24h)."""
+    try:
+        return yf.Ticker(ticker).info or {}
+    except Exception:
+        return {}
+
+
 @cache.memoize(expire=300)
 def get_current_price(ticker: str) -> tuple[float, float]:
     """Returns a tuple of (current_price, previous_close)"""

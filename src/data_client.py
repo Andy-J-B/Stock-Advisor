@@ -11,6 +11,7 @@ cache = Cache(CACHE_DIR)
 # Load APIs securely
 FINNHUB_KEY = os.getenv("FINNHUB_API_KEY", "")
 FMP_KEY = os.getenv("FMP_API_KEY", "")
+NEWSAPI_KEY = os.getenv("NEWSAPI_API_KEY", "")
 
 
 @cache.memoize(expire=3600)
@@ -124,20 +125,23 @@ def get_macro_news() -> list:
         except Exception:
             pass
 
-    # Fallback to NewsAPI Mock
-    try:
-        res = requests.get(
-            "https://newsapi.org/v2/top-headlines?category=business&apiKey=70d39de976cc4625bc3929766d7a6720",
-            timeout=5,
-        )
-        return res.json().get("articles", [])[:5]
-    except Exception:
-        return [
-            {
-                "title": "Markets await new data as volatility continues.",
-                "publisher": "System",
-            }
-        ]
+    # Fallback to NewsAPI
+    if NEWSAPI_KEY:
+        try:
+            res = requests.get(
+                f"https://newsapi.org/v2/top-headlines?category=business&apiKey={NEWSAPI_KEY}",
+                timeout=5,
+            )
+            return res.json().get("articles", [])[:5]
+        except Exception:
+            pass
+
+    return [
+        {
+            "title": "Markets await new data as volatility continues.",
+            "publisher": "System",
+        }
+    ]
 
 
 @cache.memoize(expire=3600)

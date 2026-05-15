@@ -59,12 +59,12 @@ def deposit_cash(amount: float, currency: str):
         rate = data_client.get_usd_to_cad()
         converted_amount = amount * rate
         portfolio_data["accounts"]["CAD"]["cash"] += converted_amount
+        save(portfolio_data)
         return converted_amount, rate
     else:
         portfolio_data["accounts"]["CAD"]["cash"] += amount
+        save(portfolio_data)
         return amount, 1.0
-
-    save(portfolio_data)
 
 
 def sell_position(account: str, ticker: str, shares: float, price: float):
@@ -93,15 +93,10 @@ def sell_position(account: str, ticker: str, shares: float, price: float):
     if holdings[ticker]["shares"] <= 0:
         del holdings[ticker]
 
-    # Add to CAD cash bucket
-    if account == "USD":
-        portfolio_data["accounts"]["USD"]["cash"] = (
-            portfolio_data["accounts"].get("USD", {}).get("cash", 0.0) + final_proceeds
-        )
-    else:
-        portfolio_data["accounts"]["CAD"]["cash"] = (
-            portfolio_data["accounts"].get("CAD", {}).get("cash", 0.0) + final_proceeds
-        )
+    # Add to CAD cash bucket (all proceeds converted to CAD)
+    portfolio_data["accounts"]["CAD"]["cash"] = (
+        portfolio_data["accounts"].get("CAD", {}).get("cash", 0.0) + final_proceeds
+    )
 
     save(portfolio_data)
     return final_proceeds, rate
@@ -183,7 +178,7 @@ def log_net_worth():
         total_net_worth_cad += acc_data.get("cash", 0.0) * multiplier
 
         for ticker, holding in acc_data.get("holdings", {}).items():
-            live_price = data_client.get_current_price(ticker)
+            live_price, _ = data_client.get_current_price(ticker)
             if live_price > 0:
                 total_net_worth_cad += (holding["shares"] * live_price) * multiplier
 

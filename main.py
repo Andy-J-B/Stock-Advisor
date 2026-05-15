@@ -387,7 +387,9 @@ def market_update():
 def portfolio_news():
     """Feature 3: Get recommendations for your specific stocks based on recent news."""
     current_portfolio = portfolio.load()
-    tickers = list(current_portfolio.get("holdings", {}).keys())
+    tickers = []
+    for acc in current_portfolio.get("accounts", {}).values():
+        tickers.extend(acc.get("holdings", {}).keys())
 
     if not tickers:
         console.print("[yellow]Your portfolio is empty. Nothing to analyze.[/yellow]")

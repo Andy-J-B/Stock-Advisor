@@ -1,205 +1,205 @@
-import json
-from src.setup import PORTFOLIO_FILE
+from __future__ import annotations
+
 from datetime import date
+from typing import Optional
+
 from src import data_client
+from src.database import (
+    init_db,
+    Account,
+    Holding,
+    Transaction,
+    NetWorthSnapshot,
+    Setting,
+)
 
 
-def load():
-    if not PORTFOLIO_FILE.exists():
-        return {
-            "accounts": {
-                "USD": {"holdings": {}, "cash": 0.0, "initial_cash": 0.0},
-                "CAD": {"holdings": {}, "cash": 0.0, "initial_cash": 0.0},
-            }
-        }
-    with open(PORTFOLIO_FILE, "r") as f:
-        return json.load(f)
+def load() -> dict:
+    """Returns the full portfolio dict (JSON-compatible structure for backward compat)."""
+    init_db()
+    result = {"accounts": {}}
+    for acc in Account.select():
+        acc_data = {"holdings": {}, "cash": acc.cash, "initial_cash": acc.initial_cash}
+        for h in acc.holdings:
+            acc_data["holdings"][h.ticker] = {"shares": h.shares, "avg_price": h.avg_price}
+        result["accounts"][acc.name] = acc_data
+    if not result["accounts"]:
+        for name in ["USD", "CAD"]:
+            result["accounts"][name] = {"holdings": {}, "cash": 0.0, "initial_cash": 0.0}
+    return result
 
 
-def save(data):
-    with open(PORTFOLIO_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+def save(data: dict):
+    """Pushes a full dict back into the database (used for backward compat)."""
+    init_db()
+    for acc_name, acc_data in data.get("accounts", {}).items():
+        account, _ = Account.get_or_create(
+            name=acc_name.upper(),
+            defaults={"cash": acc_data.get("cash", 0.0), "initial_cash": acc_data.get("initial_cash", 0.0)},
+        )
+        account.cash = acc_data.get("cash", 0.0)
+        account.initial_cash = acc_data.get("initial_cash", 0.0)
+        account.save()
+
+        existing = {h.ticker: h for h in account.holdings}
+        seen = set()
+        for ticker, h_data in acc_data.get("holdings", {}).items():
+            seen.add(ticker)
+            if ticker in existing:
+                h = existing[ticker]
+                h.shares = h_data["shares"]
+                h.avg_price = h_data["avg_price"]
+                h.save()
+            else:
+                Holding.create(account=account, ticker=ticker, shares=h_data["shares"], avg_price=h_data["avg_price"])
+        for ticker in set(existing) - seen:
+            existing[ticker].delete_instance()
 
 
-def ensure_account_exists(portfolio_data, account_name):
+def ensure_account_exists(portfolio_data: dict, account_name: str) -> tuple[dict, str]:
+    """Patches a dict to ensure an account exists (backward compat wrapper)."""
     account_name = account_name.upper()
     if "accounts" not in portfolio_data:
         portfolio_data["accounts"] = {}
     if account_name not in portfolio_data["accounts"]:
-        portfolio_data["accounts"][account_name] = {
-            "holdings": {},
-            "cash": 0.0,
-            "initial_cash": 0.0,
-        }
-
-    # Backward compatibility: Add initial_cash to existing accounts if missing
+        portfolio_data["accounts"][account_name] = {"holdings": {}, "cash": 0.0, "initial_cash": 0.0}
     if "initial_cash" not in portfolio_data["accounts"][account_name]:
         portfolio_data["accounts"][account_name]["initial_cash"] = 0.0
 
+    # Ensure DB account also exists
+    Account.get_or_create(name=account_name, defaults={"cash": 0.0, "initial_cash": 0.0})
     return portfolio_data, account_name
 
 
 def set_initial_cash(account: str, amount: float):
-    """Sets the initial deposit amount for an account to track all-time returns."""
-    portfolio_data = load()
-    portfolio_data, account = ensure_account_exists(portfolio_data, account)
-    portfolio_data["accounts"][account]["initial_cash"] = float(amount)
-    save(portfolio_data)
+    Account.get_or_create(name=account.upper(), defaults={"cash": 0.0, "initial_cash": 0.0})
+    Account.update(initial_cash=float(amount)).where(Account.name == account.upper()).execute()
 
 
-def deposit_cash(amount: float, currency: str):
-    """Adds cash to the CAD master account, converting USD if necessary."""
-    portfolio_data = load()
-    currency = currency.upper()
-
-    # Ensure CAD account exists as the primary cash bucket
-    portfolio_data, _ = ensure_account_exists(portfolio_data, "CAD")
-
-    if currency == "USD":
+def deposit_cash(amount: float, currency: str) -> tuple[float, float]:
+    Account.get_or_create(name="CAD", defaults={"cash": 0.0, "initial_cash": 0.0})
+    if currency.upper() == "USD":
         rate = data_client.get_usd_to_cad()
-        converted_amount = amount * rate
-        portfolio_data["accounts"]["CAD"]["cash"] += converted_amount
-        save(portfolio_data)
-        return converted_amount, rate
+        converted = amount * rate
+        Account.update(cash=Account.cash + converted).where(Account.name == "CAD").execute()
+        return converted, rate
     else:
-        portfolio_data["accounts"]["CAD"]["cash"] += amount
-        save(portfolio_data)
+        Account.update(cash=Account.cash + amount).where(Account.name == "CAD").execute()
         return amount, 1.0
 
 
-def sell_position(account: str, ticker: str, shares: float, price: float):
-    """Sells stock and puts proceeds into the CAD cash balance."""
-    portfolio_data = load()
+def sell_position(account: str, ticker: str, shares: float, price: float) -> tuple[float, float]:
     account = account.upper()
     ticker = ticker.upper()
 
-    holdings = portfolio_data["accounts"].get(account, {}).get("holdings", {})
+    try:
+        acc = Account.get(Account.name == account)
+    except Account.DoesNotExist:
+        raise ValueError(f"Account '{account}' not found.")
 
-    if ticker not in holdings or holdings[ticker]["shares"] < shares:
+    try:
+        holding = Holding.get(account=acc, ticker=ticker)
+    except Holding.DoesNotExist:
+        raise ValueError(f"Position {ticker} not found in {account} account.")
+
+    if holding.shares < shares:
         raise ValueError(f"Insufficient shares of {ticker} in {account} account.")
 
-    # Calculate proceeds
     proceeds = shares * price
-    rate = 1.0
+    rate = data_client.get_usd_to_cad() if account == "USD" else 1.0
+    final_proceeds = proceeds * rate
 
-    if account == "USD":
-        rate = data_client.get_usd_to_cad()
-        final_proceeds = proceeds * rate
+    holding.shares -= shares
+    if holding.shares <= 0:
+        holding.delete_instance()
     else:
-        final_proceeds = proceeds
+        holding.save()
 
-    # Update holdings
-    holdings[ticker]["shares"] -= shares
-    if holdings[ticker]["shares"] <= 0:
-        del holdings[ticker]
+    Account.update(cash=Account.cash + final_proceeds).where(Account.name == "CAD").execute()
 
-    # Add to CAD cash bucket (all proceeds converted to CAD)
-    portfolio_data["accounts"]["CAD"]["cash"] = (
-        portfolio_data["accounts"].get("CAD", {}).get("cash", 0.0) + final_proceeds
-    )
-
-    save(portfolio_data)
     return final_proceeds, rate
 
 
 def update_cash(account: str, amount: float):
-    """Sets the cash balance for a specific account."""
-    portfolio_data = load()
-    portfolio_data, account = ensure_account_exists(portfolio_data, account)
-
-    portfolio_data["accounts"][account]["cash"] = float(amount)
-    save(portfolio_data)
+    Account.get_or_create(name=account.upper(), defaults={"cash": 0.0, "initial_cash": 0.0})
+    Account.update(cash=float(amount)).where(Account.name == account.upper()).execute()
 
 
 def get_cash(account: str) -> float:
-    """Returns the available buying power for an account."""
-    portfolio_data = load()
-    return portfolio_data.get("accounts", {}).get(account.upper(), {}).get("cash", 0.0)
+    try:
+        acc = Account.get(Account.name == account.upper())
+        return acc.cash
+    except Account.DoesNotExist:
+        return 0.0
 
 
 def add_position(account: str, ticker: str, shares: float, price: float):
-    """Adds a new stock or updates an existing position's average cost."""
-    portfolio_data = load()
-    portfolio_data, account = ensure_account_exists(portfolio_data, account)
-
-    ticker = ticker.upper()
-    holdings = portfolio_data["accounts"][account]["holdings"]
-
-    if ticker in holdings:
-        # Calculate new average price
-        old_shares = holdings[ticker]["shares"]
-        old_price = holdings[ticker]["avg_price"]
-
-        total_shares = old_shares + shares
-        total_cost = (old_shares * old_price) + (shares * price)
-        new_avg = total_cost / total_shares
-
-        holdings[ticker]["shares"] = total_shares
-        holdings[ticker]["avg_price"] = new_avg
-    else:
-        # Brand new position
-        holdings[ticker] = {"shares": shares, "avg_price": price}
-
-    # Calculate proceeds
-    proceeds = shares * price
-
-    if account == "USD":
-        portfolio_data["accounts"]["USD"]["cash"] = (
-            portfolio_data["accounts"].get("USD", {}).get("cash", 0.0) - proceeds
-        )
-    else:
-        portfolio_data["accounts"]["CAD"]["cash"] = (
-            portfolio_data["accounts"].get("CAD", {}).get("cash", 0.0) - proceeds
-        )
-
-    save(portfolio_data)
-
-
-def get_account_holdings(account: str):
-    """Returns the holdings for a specific account."""
-    portfolio_data = load()
     account = account.upper()
-    return portfolio_data.get("accounts", {}).get(account, {}).get("holdings", {})
+    ticker = ticker.upper()
+    acc, _ = Account.get_or_create(name=account, defaults={"cash": 0.0, "initial_cash": 0.0})
+
+    holding, created = Holding.get_or_create(
+        account=acc,
+        ticker=ticker,
+        defaults={"shares": shares, "avg_price": price},
+    )
+    if not created:
+        total_shares = holding.shares + shares
+        total_cost = (holding.shares * holding.avg_price) + (shares * price)
+        holding.shares = total_shares
+        holding.avg_price = total_cost / total_shares
+        holding.save()
+
+    proceeds = shares * price
+    Account.update(cash=Account.cash - proceeds).where(Account.name == account).execute()
 
 
-HISTORY_FILE = PORTFOLIO_FILE.parent / "history.json"
+def remove_position(account: str, ticker: str, shares: Optional[float] = None):
+    account = account.upper()
+    ticker = ticker.upper()
+
+    try:
+        acc = Account.get(Account.name == account)
+    except Account.DoesNotExist:
+        raise ValueError(f"Account '{account}' not found.")
+
+    try:
+        holding = Holding.get(account=acc, ticker=ticker)
+    except Holding.DoesNotExist:
+        raise ValueError(f"Position {ticker} not found in {account} account.")
+
+    if shares is None or shares >= holding.shares:
+        holding.delete_instance()
+    else:
+        holding.shares -= shares
+        holding.save()
+
+
+def get_account_holdings(account: str) -> dict:
+    try:
+        acc = Account.get(Account.name == account.upper())
+    except Account.DoesNotExist:
+        return {}
+    return {h.ticker: {"shares": h.shares, "avg_price": h.avg_price} for h in acc.holdings}
 
 
 def log_net_worth():
-    """Calculates total CAD net worth and logs it for the current date."""
-    portfolio_data = load()
-    accounts = portfolio_data.get("accounts", {})
+    accounts = Account.select()
     fx_rate = data_client.get_usd_to_cad()
+    total = 0.0
 
-    total_net_worth_cad = 0.0
-
-    for acc_name, acc_data in accounts.items():
-        multiplier = fx_rate if acc_name == "USD" else 1.0
-        total_net_worth_cad += acc_data.get("cash", 0.0) * multiplier
-
-        for ticker, holding in acc_data.get("holdings", {}).items():
-            live_price, _ = data_client.get_current_price(ticker)
+    for acc in accounts:
+        multiplier = fx_rate if acc.name == "USD" else 1.0
+        total += acc.cash * multiplier
+        for h in acc.holdings:
+            live_price, _ = data_client.get_current_price(h.ticker)
             if live_price > 0:
-                total_net_worth_cad += (holding["shares"] * live_price) * multiplier
+                total += (h.shares * live_price) * multiplier
 
-    # Load existing history
-    if HISTORY_FILE.exists():
-        with open(HISTORY_FILE, "r") as f:
-            history = json.load(f)
-    else:
-        history = {}
-
-    # Update today's value (overwrites if run multiple times in one day)
-    today_str = date.today().isoformat()
-    history[today_str] = round(total_net_worth_cad, 2)
-
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(history, f, indent=4)
+    today_str = date.today()
+    NetWorthSnapshot.get_or_create(date=today_str, defaults={"value": round(total, 2)})
+    NetWorthSnapshot.update(value=round(total, 2)).where(NetWorthSnapshot.date == today_str).execute()
 
 
 def get_history() -> dict:
-    """Returns the net worth history."""
-    if HISTORY_FILE.exists():
-        with open(HISTORY_FILE, "r") as f:
-            return json.load(f)
-    return {}
+    return {str(s.date): s.value for s in NetWorthSnapshot.select().order_by(NetWorthSnapshot.date)}

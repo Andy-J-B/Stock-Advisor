@@ -345,6 +345,23 @@ def update_cash_cmd(
 
 
 @app.command()
+def remove_stock(
+    ticker: str,
+    shares: float = typer.Option(None, "--shares", "-s", help="Number of shares to remove (omit to remove entire position)"),
+    account: str = typer.Option("USD", "--account", "-a", help="Account to remove from (e.g., USD, CAD)"),
+):
+    """Remove a stock position (or partial shares) from your portfolio."""
+    try:
+        portfolio.remove_position(account, ticker, shares)
+        if shares:
+            console.print(f"[bold green]Removed {shares} shares of {ticker.upper()} from {account.upper()}.[/bold green]")
+        else:
+            console.print(f"[bold green]Removed entire position of {ticker.upper()} from {account.upper()}.[/bold green]")
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+
+@app.command()
 def analyze():
     """Feature 1: Analyze current holdings against your risk profile."""
     console.print("[bold blue]Analyzing portfolio...[/bold blue]")
@@ -417,10 +434,36 @@ def settings(
     ),
 ):
     """View or update your advisor risk allocation."""
+    current = config.load_settings()
+    current_alloc = current.get("risk_allocation", {})
+
     if any(x is not None for x in [conservative, moderate, aggressive]):
-        c = conservative or 0
-        m = moderate or 0
-        a = aggressive or 0
+        c = conservative if conservative is not None else current_alloc.get("conservative", 0)
+        m = moderate if moderate is not None else current_alloc.get("moderate", 100)
+        a = aggressive if aggressive is not None else current_alloc.get("aggressive", 0)
+
+        specified = sum(1 for x in [conservative, moderate, aggressive] if x is not None)
+        if specified == 2:
+            if conservative is None:
+                c = 100 - m - a
+            elif moderate is None:
+                m = 100 - c - a
+            else:
+                a = 100 - c - m
+        elif specified == 1:
+            user_val = (
+                conservative if conservative is not None
+                else moderate if moderate is not None
+                else aggressive
+            )
+            remaining = 100 - user_val
+            split = remaining // 2
+            if conservative is None:
+                c = split
+            if moderate is None:
+                m = split
+            if aggressive is None:
+                a = remaining - split
 
         total = c + m + a
         if total != 100:
@@ -432,8 +475,7 @@ def settings(
         config.update_allocation(c, m, a)
         console.print("[bold green]Risk allocation successfully updated![/bold green]")
 
-    current = config.load_settings()
-    alloc = current.get("risk_allocation", {})
+    alloc = current_alloc
 
     table = Table(title="Current Risk Allocation")
     table.add_column("Category", style="cyan")

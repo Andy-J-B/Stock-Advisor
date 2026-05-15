@@ -1,24 +1,28 @@
+from __future__ import annotations
+
 import json
-from src.setup import SETTINGS_FILE
+
+from src.database import init_db, Setting
 
 
-def load_settings():
-    """Reads the current user settings from the JSON file."""
-    if not SETTINGS_FILE.exists():
-        return {}
-    with open(SETTINGS_FILE, "r") as f:
-        return json.load(f)
+def load_settings() -> dict:
+    init_db()
+    result = {}
+    for s in Setting.select():
+        if s.key == "risk_allocation":
+            result[s.key] = json.loads(s.value)
+        elif s.key in ("conservative", "moderate", "aggressive"):
+            continue
+        else:
+            result[s.key] = s.value
+    return result
 
 
 def update_allocation(conservative: int, moderate: int, aggressive: int):
-    """Updates the risk allocation in the settings file."""
-    settings = load_settings()
-
-    settings["risk_allocation"] = {
+    init_db()
+    Setting.get_or_create(key="risk_allocation", defaults={"value": "{}"})
+    Setting.update(value=json.dumps({
         "conservative": conservative,
         "moderate": moderate,
         "aggressive": aggressive,
-    }
-
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump(settings, f, indent=4)
+    })).where(Setting.key == "risk_allocation").execute()

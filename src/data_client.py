@@ -1,17 +1,32 @@
 import os
+import asyncio
 import yfinance as yf
-import requests
+import httpx
 from diskcache import Cache
 from pathlib import Path
 
-# Setup local cache
 CACHE_DIR = Path(__file__).parent.parent / "data" / "cache"
 cache = Cache(CACHE_DIR)
 
-# Load APIs securely
 FINNHUB_KEY = os.getenv("FINNHUB_API_KEY", "")
 FMP_KEY = os.getenv("FMP_API_KEY", "")
 NEWSAPI_KEY = os.getenv("NEWSAPI_API_KEY", "")
+
+_http = httpx.Client(timeout=10)
+_async_http = None
+
+
+def _get_async_client():
+    global _async_http
+    if _async_http is None or _async_http.is_closed:
+        _async_http = httpx.AsyncClient(timeout=10)
+    return _async_http
+
+
+async def _close_async_client():
+    global _async_http
+    if _async_http and not _async_http.is_closed:
+        await _async_http.aclose()
 
 
 @cache.memoize(expire=3600)
@@ -20,10 +35,10 @@ def get_usd_to_cad() -> float:
     fallback_url = "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json"
     try:
         try:
-            response = requests.get(primary_url, timeout=5)
+            response = _http.get(primary_url)
             response.raise_for_status()
-        except requests.exceptions.RequestException:  # Fix applied here
-            response = requests.get(fallback_url, timeout=5)
+        except httpx.HTTPError:
+            response = _http.get(fallback_url)
             response.raise_for_status()
         return response.json()["usd"]["cad"]
     except Exception:
@@ -39,10 +54,18 @@ def get_current_price(ticker: str) -> tuple[float, float]:
         try:
             prev_close = round(stock.fast_info["previousClose"], 2)
         except KeyError:
-            prev_close = current  # Fallback to avoid division by zero errors
+            prev_close = current
         return current, prev_close
     except Exception:
         return 0.0, 0.0
+
+
+async def get_current_prices_batch(tickers: list[str]) -> dict[str, tuple[float, float]]:
+    """Fetch prices for multiple tickers concurrently using threads (yfinance is sync)."""
+    loop = asyncio.get_event_loop()
+    tasks = [loop.run_in_executor(None, get_current_price, t) for t in tickers]
+    results = await asyncio.gather(*tasks)
+    return dict(zip(tickers, results))
 
 
 @cache.memoize(expire=86400)
@@ -52,29 +75,26 @@ def get_advanced_metrics(ticker: str) -> dict:
     if base_ticker == "VISA":
         base_ticker = "V"
 
-    # Attempt FMP first for key ratios if API key exists
     if FMP_KEY:
         try:
             url = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{base_ticker}?apikey={FMP_KEY}"
-            res = requests.get(url, timeout=5).json()
+            res = _http.get(url).json()
             if res:
                 m = res[0]
                 return {
                     "P/E Ratio (TTM)": round(m.get("peRatioTTM", 0), 2),
                     "Debt to Equity": round(m.get("debtToEquityTTM", 0), 2),
-                    "Revenue Growth (YoY)": "See yfinance",  # FMP requires separate growth endpoint
+                    "Revenue Growth (YoY)": "See yfinance",
                     "Dividend Yield": f"{m.get('dividendYieldPercentageTTM', 0):.2f}%",
                     "Free Cash Flow": f"${m.get('freeCashFlowYieldTTM', 0)*100:.2f}% Yield",
                 }
         except Exception:
             pass
 
-    # Fallback/Primary data source: yfinance
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
 
-        # Calculate Margin of Safety based on analyst targets
         current = info.get("currentPrice", 0)
         target = info.get("targetMeanPrice", 0)
         mos = ((target - current) / target * 100) if target else 0
@@ -106,41 +126,35 @@ def get_advanced_metrics(ticker: str) -> dict:
 
 @cache.memoize(expire=3600)
 def get_macro_news() -> list:
-    """Fetches macro market news. Prefers Finnhub, falls back to NewsAPI."""
+    """
+    Fetches macro market news.
+    Used by ``market_update`` CLI command. Alpha Vantage provides a parallel
+    news source (``alpha_vantage.get_macro_news``) used by ``evaluate_portfolio``.
+    """
     if FINNHUB_KEY:
         try:
-            res = requests.get(
-                f"https://finnhub.io/api/v1/news?category=general&token={FINNHUB_KEY}",
-                timeout=5,
+            res = _http.get(
+                f"https://finnhub.io/api/v1/news?category=general&token={FINNHUB_KEY}"
             )
             data = res.json()
             return [
-                {
-                    "title": d.get("headline", ""),
-                    "publisher": d.get("source", ""),
-                    "link": d.get("url", ""),
-                }
+                {"title": d.get("headline", ""), "publisher": d.get("source", ""), "link": d.get("url", "")}
                 for d in data[:5]
             ]
         except Exception:
             pass
 
-    # Fallback to NewsAPI
     if NEWSAPI_KEY:
         try:
-            res = requests.get(
-                f"https://newsapi.org/v2/top-headlines?category=business&apiKey={NEWSAPI_KEY}",
-                timeout=5,
+            res = _http.get(
+                f"https://newsapi.org/v2/top-headlines?category=business&apiKey={NEWSAPI_KEY}"
             )
             return res.json().get("articles", [])[:5]
         except Exception:
             pass
 
     return [
-        {
-            "title": "Markets await new data as volatility continues.",
-            "publisher": "System",
-        }
+        {"title": "Markets await new data as volatility continues.", "publisher": "System"}
     ]
 
 
@@ -150,11 +164,7 @@ def get_ticker_news(ticker: str, limit: int = 3) -> list:
     try:
         stock = yf.Ticker(ticker)
         return [
-            {
-                "title": a.get("title", ""),
-                "publisher": a.get("publisher", ""),
-                "link": a.get("link", ""),
-            }
+            {"title": a.get("title", ""), "publisher": a.get("publisher", ""), "link": a.get("link", "")}
             for a in stock.news[:limit]
         ]
     except Exception:

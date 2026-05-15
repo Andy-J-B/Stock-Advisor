@@ -16,7 +16,7 @@ import logging
 from typing import Any, Dict, List, Tuple, Optional
 
 
-import requests
+import httpx
 from diskcache import Cache
 from pathlib import Path
 from dotenv import load_dotenv
@@ -35,6 +35,8 @@ cache = Cache(CACHE_DIR)
 _API_KEY = os.getenv("ALPHAVANTAGE_API_KEY", "").strip()
 log = logging.getLogger(__name__)
 
+_http = httpx.Client(timeout=10)
+
 
 def _has_key() -> bool:
     return bool(_API_KEY)
@@ -43,7 +45,7 @@ def _has_key() -> bool:
 def _get(url: str, params: Dict[str, Any]) -> Dict[str, Any]:
     """GET request with timeout/exception handling; returns parsed JSON."""
     try:
-        resp = requests.get(url, params=params, timeout=8)
+        resp = _http.get(url, params=params)
         resp.raise_for_status()
         return resp.json()
     except Exception as exc:
@@ -94,30 +96,10 @@ def get_daily_price(ticker: str) -> Tuple[float, float]:
 # ----------------------------------------------------------------------
 # 2️⃣ FX – USD → CAD (used throughout the app)
 # ----------------------------------------------------------------------
-@cache.memoize(expire=3600)  # 1 h cache – FX moves slowly
-def get_usd_to_cad() -> float:
-    """Realtime USD‑to‑CAD rate via the CURRENCY_EXCHANGE_RATE endpoint."""
-    if not _has_key():
-        return 1.35  # a sensible static fallback
-
-    url = "https://www.alphavantage.co/query"
-    params = {
-        "function": "CURRENCY_EXCHANGE_RATE",
-        "from_currency": "USD",
-        "to_currency": "CAD",
-        "apikey": _API_KEY,
-    }
-
-    try:
-        data = _get(url, params)
-        rate_info = data.get("Realtime Currency Exchange Rate", {})
-        return float(rate_info.get("5. Exchange Rate", 1.35))
-    except Exception:
-        return 1.35
-
-
 # ----------------------------------------------------------------------
 # 3️⃣ Macro‑level news (Alpha “NEWS_SENTIMENT”)
+# NOTE: FX rates are served by data_client.get_usd_to_cad().
+# ----------------------------------------------------------------------
 # ----------------------------------------------------------------------
 @cache.memoize(expire=1800)  # 30 min – news isn’t refreshed every second
 def get_macro_news(limit: int = 5) -> List[Dict[str, Any]]:

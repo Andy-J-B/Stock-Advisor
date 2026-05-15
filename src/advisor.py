@@ -6,6 +6,7 @@ import json
 import warnings
 import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
+from typing import Any, List
 from google import genai
 from rich.panel import Panel
 from rich.markdown import Markdown
@@ -19,7 +20,7 @@ from .alpha_vantage import (
     get_technical_indicator,
     get_daily_price as av_get_daily_price,
 )
-from .data_client import cache
+
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", module="urllib3")

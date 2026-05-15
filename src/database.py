@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import json
-import os
 from datetime import date, datetime
 from pathlib import Path
-from typing import Optional
 
 from peewee import (
     SqliteDatabase,
@@ -15,7 +13,6 @@ from peewee import (
     DateField,
     ForeignKeyField,
     TextField,
-    fn,
 )
 
 DATA_DIR = Path(__file__).parent.parent / "data"

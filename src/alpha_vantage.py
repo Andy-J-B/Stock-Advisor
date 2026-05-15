@@ -11,7 +11,6 @@ list – the advisor falls back to the existing yfinance / VADER path.
 from __future__ import annotations
 import traceback
 import os
-import json
 import logging
 from typing import Any, Dict, List, Tuple, Optional
 

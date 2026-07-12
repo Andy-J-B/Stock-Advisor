@@ -87,13 +87,16 @@ def test_build_holding_row_normal():
     assert metrics["cost"] == 1500.0
     assert metrics["value"] == 1600.0
     assert metrics["day_chg"] == 50.0  # (160 - 155) * 10
+    assert "$1,600.00" in row[6]  # total value = 10 * 160
+    assert "+6.67%" in row[7]  # return %: (100/1500)*100
+    assert "+100.00" in row[8]  # return $
 
 
 def test_build_holding_row_zero_price():
-    """When live_price == 0, the row shows N/A and metrics report 0."""
+    """When live_price == 0, row shows N/A and metrics use cost as value (neutral)."""
     row, metrics = _build_holding_row("AAPL", 10, 150.0, 0.0, 155.0)
     assert "[yellow]N/A[/yellow]" in row[3] or row[3] == "[yellow]N/A[/yellow]"
-    assert metrics["value"] == 0
+    assert metrics["value"] == 1500.0  # set to cost for neutral aggregate
     assert metrics["day_chg"] == 0
 
 
@@ -109,6 +112,8 @@ def test_build_holding_row_loss():
     assert metrics["cost"] == 1000.0
     assert metrics["value"] == 900.0
     assert metrics["day_chg"] == 25.0
+    assert "-10.00%" in row[7]  # return %: (-100/1000)*100
+    assert "-100.00" in row[8]  # return $
 
 
 def test_build_holding_row_fractional_shares():

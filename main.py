@@ -76,7 +76,9 @@ def _build_holding_row(ticker: str, shares: float, avg_price: float, live_price:
 
     total_day_diff = day_diff * shares
     day_color = _price_color(day_diff)
-    ret_pct_str = _colorize(diff, "{:+.2f}%")
+    ret_pct = (diff / cost * 100) if cost > 0 else 0.0
+    ret_color = _price_color(diff)
+    ret_pct_str = f"[{ret_color}]{ret_pct:+.2f}%[/{ret_color}]"
     ret_dol_str = _colorize(diff, "{:+.2f}")
 
     row = [
@@ -90,11 +92,10 @@ def _build_holding_row(ticker: str, shares: float, avg_price: float, live_price:
         ret_pct_str if live_price > 0 else "[yellow]N/A[/yellow]",
         ret_dol_str if live_price > 0 else "[yellow]N/A[/yellow]",
     ]
-    metrics = {
-        "cost": cost,
-        "value": value if live_price > 0 else 0,
-        "day_chg": total_day_diff if live_price > 0 else 0,
-    }
+    if live_price > 0:
+        metrics = {"cost": cost, "value": value, "day_chg": total_day_diff}
+    else:
+        metrics = {"cost": cost, "value": cost, "day_chg": 0.0}
     return row, metrics
 
 

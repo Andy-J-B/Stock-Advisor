@@ -1,36 +1,42 @@
 import os
-import asyncio
+import logging
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
+
 import yfinance as yf
 import httpx
-from diskcache import Cache
-from pathlib import Path
+from tenacity import retry, stop_after_attempt, wait_exponential
 
-CACHE_DIR = Path(__file__).parent.parent / "data" / "cache"
-cache = Cache(CACHE_DIR)
+from src.database import init_db, cache_get, cache_set
+
+log = logging.getLogger(__name__)
+
+init_db()
 
 FINNHUB_KEY = os.getenv("FINNHUB_API_KEY", "")
 FMP_KEY = os.getenv("FMP_API_KEY", "")
 NEWSAPI_KEY = os.getenv("NEWSAPI_API_KEY", "")
 
 _http = httpx.Client(timeout=10)
-_async_http = None
+
+# TTL constants (seconds)
+TTL_PRICE = 300        # 5 min – live prices
+TTL_FX = 3600          # 1 h – exchange rates
+TTL_NEWS = 3600        # 1 h – news headlines
+TTL_INFO = 86400       # 24 h – ticker fundamentals
+TTL_METRICS = 86400    # 24 h – advanced metrics
 
 
-def _get_async_client():
-    global _async_http
-    if _async_http is None or _async_http.is_closed:
-        _async_http = httpx.AsyncClient(timeout=10)
-    return _async_http
+# ---------------------------------------------------------------------------
+# FX rate
+# ---------------------------------------------------------------------------
 
-
-async def _close_async_client():
-    global _async_http
-    if _async_http and not _async_http.is_closed:
-        await _async_http.aclose()
-
-
-@cache.memoize(expire=3600)
+@retry(stop=stop_after_attempt(2), wait=wait_exponential(min=1, max=4))
 def get_usd_to_cad() -> float:
+    cached = cache_get("fx:usd_cad", TTL_FX)
+    if cached is not None:
+        return cached
+
     primary_url = "https://latest.currency-api.pages.dev/v1/currencies/usd.json"
     fallback_url = "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json"
     try:
@@ -40,23 +46,45 @@ def get_usd_to_cad() -> float:
         except httpx.HTTPError:
             response = _http.get(fallback_url)
             response.raise_for_status()
-        return response.json()["usd"]["cad"]
+        rate = response.json()["usd"]["cad"]
     except Exception:
-        return 1.35
+        rate = 1.35
+
+    cache_set("fx:usd_cad", rate)
+    return rate
 
 
-@cache.memoize(expire=86400)
+# ---------------------------------------------------------------------------
+# Ticker info / fundamentals
+# ---------------------------------------------------------------------------
+
 def get_ticker_info(ticker: str) -> dict:
     """Returns the full yfinance info dict for a ticker (cached 24h)."""
+    cache_key = f"info:{ticker}"
+    cached = cache_get(cache_key, TTL_INFO)
+    if cached is not None:
+        return cached
+
     try:
-        return yf.Ticker(ticker).info or {}
+        result = yf.Ticker(ticker).info or {}
     except Exception:
-        return {}
+        result = {}
+
+    cache_set(cache_key, result)
+    return result
 
 
-@cache.memoize(expire=300)
+# ---------------------------------------------------------------------------
+# Live price
+# ---------------------------------------------------------------------------
+
 def get_current_price(ticker: str) -> tuple[float, float]:
-    """Returns a tuple of (current_price, previous_close)"""
+    """Returns (current_price, previous_close)."""
+    cache_key = f"price:{ticker}"
+    cached = cache_get(cache_key, TTL_PRICE)
+    if cached is not None:
+        return tuple(cached)
+
     try:
         stock = yf.Ticker(ticker)
         current = round(stock.fast_info["lastPrice"], 2)
@@ -64,33 +92,46 @@ def get_current_price(ticker: str) -> tuple[float, float]:
             prev_close = round(stock.fast_info["previousClose"], 2)
         except KeyError:
             prev_close = current
-        return current, prev_close
+        result = [current, prev_close]
     except Exception:
-        return 0.0, 0.0
+        result = [0.0, 0.0]
+
+    cache_set(cache_key, result)
+    return tuple(result)
 
 
-async def get_current_prices_batch(tickers: list[str]) -> dict[str, tuple[float, float]]:
-    """Fetch prices for multiple tickers concurrently using threads (yfinance is sync)."""
-    loop = asyncio.get_event_loop()
-    tasks = [loop.run_in_executor(None, get_current_price, t) for t in tickers]
-    results = await asyncio.gather(*tasks)
+def get_current_prices_batch(tickers: list[str]) -> dict[str, tuple[float, float]]:
+    """Fetch prices for multiple tickers concurrently via thread pool."""
+    if not tickers:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(len(tickers), 10)) as pool:
+        results = list(pool.map(get_current_price, tickers))
     return dict(zip(tickers, results))
 
 
-@cache.memoize(expire=86400)
+# ---------------------------------------------------------------------------
+# Advanced metrics (FMP + yfinance fallback)
+# ---------------------------------------------------------------------------
+
 def get_advanced_metrics(ticker: str) -> dict:
     """Fetches comprehensive financial data for the Deep-Dive report."""
+    cache_key = f"metrics:{ticker}"
+    cached = cache_get(cache_key, TTL_METRICS)
+    if cached is not None:
+        return cached
+
     base_ticker = ticker.split(".")[0]
     if base_ticker == "VISA":
         base_ticker = "V"
 
+    result = None
     if FMP_KEY:
         try:
             url = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{base_ticker}?apikey={FMP_KEY}"
             res = _http.get(url).json()
             if res:
                 m = res[0]
-                return {
+                result = {
                     "P/E Ratio (TTM)": round(m.get("peRatioTTM", 0), 2),
                     "Debt to Equity": round(m.get("debtToEquityTTM", 0), 2),
                     "Revenue Growth (YoY)": "See yfinance",
@@ -100,81 +141,105 @@ def get_advanced_metrics(ticker: str) -> dict:
         except Exception:
             pass
 
-    try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
+    if result is None:
+        try:
+            stock = yf.Ticker(ticker)
+            info = stock.info
+            current = info.get("currentPrice", 0)
+            target = info.get("targetMeanPrice", 0)
+            mos = ((target - current) / target * 100) if target else 0
+            result = {
+                "Trailing P/E": info.get("trailingPE", "N/A"),
+                "Forward P/E": info.get("forwardPE", "N/A"),
+                "Price to Book": info.get("priceToBook", "N/A"),
+                "Debt-to-Equity": info.get("debtToEquity", "N/A"),
+                "Revenue Growth (YoY)": (
+                    f"{info.get('revenueGrowth', 0) * 100:.2f}%"
+                    if info.get("revenueGrowth")
+                    else "N/A"
+                ),
+                "Profit Margins": (
+                    f"{info.get('profitMargins', 0) * 100:.2f}%"
+                    if info.get('profitMargins')
+                    else "N/A"
+                ),
+                "Free Cash Flow": info.get("freeCashflow", "N/A"),
+                "52-Week High/Low": f"${info.get('fiftyTwoWeekHigh')} / ${info.get('fiftyTwoWeekLow')}",
+                "Analyst Target (Mean)": f"${target}",
+                "Recommendation": info.get("recommendationKey", "N/A").upper(),
+                "Margin of Safety": f"{mos:.2f}%",
+            }
+        except Exception:
+            result = {"Error": "Could not retrieve fundamental data."}
 
-        current = info.get("currentPrice", 0)
-        target = info.get("targetMeanPrice", 0)
-        mos = ((target - current) / target * 100) if target else 0
-
-        return {
-            "Trailing P/E": info.get("trailingPE", "N/A"),
-            "Forward P/E": info.get("forwardPE", "N/A"),
-            "Price to Book": info.get("priceToBook", "N/A"),
-            "Debt-to-Equity": info.get("debtToEquity", "N/A"),
-            "Revenue Growth (YoY)": (
-                f"{info.get('revenueGrowth', 0) * 100:.2f}%"
-                if info.get("revenueGrowth")
-                else "N/A"
-            ),
-            "Profit Margins": (
-                f"{info.get('profitMargins', 0) * 100:.2f}%"
-                if info.get("profitMargins")
-                else "N/A"
-            ),
-            "Free Cash Flow": info.get("freeCashflow", "N/A"),
-            "52-Week High/Low": f"${info.get('fiftyTwoWeekHigh')} / ${info.get('fiftyTwoWeekLow')}",
-            "Analyst Target (Mean)": f"${target}",
-            "Recommendation": info.get("recommendationKey", "N/A").upper(),
-            "Margin of Safety": f"{mos:.2f}%",
-        }
-    except Exception:
-        return {"Error": "Could not retrieve fundamental data."}
+    cache_set(cache_key, result)
+    return result
 
 
-@cache.memoize(expire=3600)
+# ---------------------------------------------------------------------------
+# News
+# ---------------------------------------------------------------------------
+
 def get_macro_news() -> list:
-    """
-    Fetches macro market news.
-    Used by ``market_update`` CLI command. Alpha Vantage provides a parallel
-    news source (``alpha_vantage.get_macro_news``) used by ``evaluate_portfolio``.
-    """
+    """Fetches macro market news (Finnhub → NewsAPI → fallback)."""
+    cached = cache_get("macro_news", TTL_NEWS)
+    if cached is not None:
+        return cached
+
+    result = None
     if FINNHUB_KEY:
         try:
             res = _http.get(
                 f"https://finnhub.io/api/v1/news?category=general&token={FINNHUB_KEY}"
             )
             data = res.json()
-            return [
+            result = [
                 {"title": d.get("headline", ""), "publisher": d.get("source", ""), "link": d.get("url", "")}
                 for d in data[:5]
             ]
         except Exception:
             pass
 
-    if NEWSAPI_KEY:
+    if result is None and NEWSAPI_KEY:
         try:
             res = _http.get(
                 f"https://newsapi.org/v2/top-headlines?category=business&apiKey={NEWSAPI_KEY}"
             )
-            return res.json().get("articles", [])[:5]
+            result = res.json().get("articles", [])[:5]
         except Exception:
             pass
 
-    return [
-        {"title": "Markets await new data as volatility continues.", "publisher": "System"}
-    ]
+    if result is None:
+        result = [{"title": "Markets await new data as volatility continues.", "publisher": "System"}]
+
+    cache_set("macro_news", result)
+    return result
 
 
-@cache.memoize(expire=3600)
 def get_ticker_news(ticker: str, limit: int = 3) -> list:
     """Fetches specific ticker news via yfinance."""
+    cache_key = f"news:{ticker}:{limit}"
+    cached = cache_get(cache_key, TTL_NEWS)
+    if cached is not None:
+        return cached
+
     try:
         stock = yf.Ticker(ticker)
-        return [
+        result = [
             {"title": a.get("title", ""), "publisher": a.get("publisher", ""), "link": a.get("link", "")}
             for a in stock.news[:limit]
         ]
     except Exception:
-        return [{"title": f"Could not fetch news for {ticker}.", "publisher": "System"}]
+        result = [{"title": f"Could not fetch news for {ticker}.", "publisher": "System"}]
+
+    cache_set(cache_key, result)
+    return result
+
+
+def get_ticker_news_batch(tickers: list[str], limit: int = 3) -> dict[str, list]:
+    """Fetch news for multiple tickers concurrently via thread pool."""
+    if not tickers:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(len(tickers), 10)) as pool:
+        results = list(pool.map(lambda t: get_ticker_news(t, limit), tickers))
+    return dict(zip(tickers, results))

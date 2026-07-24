@@ -125,9 +125,10 @@ def _print_account_summary(cash: float, initial_cash: float, cost: float, value:
     all_time_pct = (all_time_dol / initial_cash * 100) if initial_cash > 0 else 0
 
     console.print(f"  [bold]Initial Investment:[/bold]  [white]{_dol_str(initial_cash)}[/white]")
+    console.print(f"  [bold]Invested in Stocks:[/bold]  [white]{_dol_str(cost)}[/white]")
     console.print(f"  [bold]Cash Balance:[/bold]        [white]{_dol_str(cash)}[/white]")
     console.print(f"  [bold]Today's Return:[/bold]      {_colorize(day_chg, '{:,.2f}')} ({_colorize(day_pct, '{:+.2f}%')})")
-    console.print(f"  [bold]Holdings Return:[/bold]     {_colorize(ret_dol, '{:,.2f}')} ({_colorize(ret_pct, '{:+.2f}%')})")
+    console.print(f"  [bold]Holdings P/L:[/bold]        {_colorize(ret_dol, '{:,.2f}')} ({_colorize(ret_pct, '{:+.2f}%')})")
     console.print(f"  [bold]All-Time Return:[/bold]     {_colorize(all_time_dol, '{:,.2f}')} ({_colorize(all_time_pct, '{:+.2f}%')})")
     console.print(f"  [bold]Total Account Value:[/bold] [cyan]{_dol_str(total_val)}[/cyan]\n")
 
@@ -151,9 +152,10 @@ def _print_global_summary(grand: dict):
 
     t = Table(show_header=False, border_style="bright_blue", title="[bold blue]GLOBAL PORTFOLIO SUMMARY (CAD)[/bold blue]")
     t.add_row("Total Initial Invested", _dol_str(grand["initial"]))
+    t.add_row("Total Invested in Stocks", f"[bold white]{_dol_str(grand['cost'])}[/bold white]")
     t.add_row("Total Combined Cash", _dol_str(grand["cash"]))
     t.add_row("Today's Return", _colorize(grand["day_chg"], "{:,.2f}") + f" ({_colorize(day_pct, '{:+.2f}%')})")
-    t.add_row("Active Holdings Return", _colorize(ret_dol, "{:,.2f}") + f" ({_colorize(ret_pct, '{:+.2f}%')})")
+    t.add_row("Stocks P/L", _colorize(ret_dol, "{:,.2f}") + f" ({_colorize(ret_pct, '{:+.2f}%')})")
     t.add_row("All-Time Global Return", _colorize(all_time_dol, "{:,.2f}") + f" ({_colorize(all_time_pct, '{:+.2f}%')})")
     t.add_row("NET WORTH", f"[bold cyan]{_dol_str(net_worth)}[/bold cyan]")
     console.print(Panel(t, expand=False))

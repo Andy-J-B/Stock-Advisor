@@ -91,7 +91,7 @@ class FinBertSentiment:
         return results  # type: ignore[return-value]
 
     # ------------------------------------------------------------------
-    internal
+    # Internal
     # ------------------------------------------------------------------
 
     def _score_raw(self, text: str) -> dict[str, Any]:

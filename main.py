@@ -540,8 +540,32 @@ def portfolio_news():
 
     for ticker in tickers:
         news = news_batch.get(ticker, [])
-        advice = advisor.analyze_ticker_sentiment(ticker, news)
+        advice, headline_scores = advisor.analyze_ticker_sentiment(ticker, news)
         console.print(f"[bold]{ticker} Update:[/bold] {advice}")
+
+        if headline_scores:
+            st = Table(show_header=True, border_style="bright_cyan")
+            st.add_column("Headline", max_width=50)
+            st.add_column("Label", justify="center")
+            st.add_column("Score", justify="right")
+            for article, sc in zip(news[:10], headline_scores):
+                label_color = {"positive": "green", "negative": "red"}.get(
+                    sc["label"], "yellow"
+                )
+                st.add_row(
+                    article.get("title", "")[:50],
+                    f"[{label_color}]{sc['label']}[/{label_color}]",
+                    f"{sc['compound']:+.2f}",
+                )
+            if len(headline_scores) > 1:
+                avg = sum(s["compound"] for s in headline_scores) / len(
+                    headline_scores
+                )
+                st.add_row(
+                    "[dim]Aggregate[/dim]", "", f"[bold]{avg:+.2f}[/bold]"
+                )
+            console.print(st)
+
         console.print("-" * 40)
 
 

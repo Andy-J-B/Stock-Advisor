@@ -4,12 +4,11 @@ from __future__ import annotations
 import os
 import json
 import warnings
-import nltk
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
 from typing import Any, List
 from google import genai
 from rich.panel import Panel
 from rich.markdown import Markdown
+from .sentiment import get_sentiment_engine
 from .alpha_vantage import (
     get_macro_news as av_get_macro_news,
     get_ticker_news as av_get_ticker_news,
@@ -24,16 +23,6 @@ from .alpha_vantage import (
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", module="urllib3")
-
-# ----------------------------------------------------------------------
-# Sentiment Analyzer (fallback only)
-# ----------------------------------------------------------------------
-try:
-    nltk.data.find("sentiment/vader_lexicon.zip")
-except LookupError:
-    nltk.download("vader_lexicon", quiet=True)
-
-sia = SentimentIntensityAnalyzer()
 
 
 # ----------------------------------------------------------------------
@@ -113,12 +102,12 @@ a **comprehensive market outlook** in clean Markdown. Include:
         return gemini_response.strip()
 
     # ------------------------------------------------------------------
-    # Fallback – simple VADER sentiment score
+    # Fallback – FinBERT sentiment score
     # ------------------------------------------------------------------
-    total_compound = sum(
-        sia.polarity_scores(a.get("title", ""))["compound"] for a in macro_news
-    )
-    avg_score = total_compound / len(macro_news)
+    engine = get_sentiment_engine()
+    titles = [a.get("title", "") for a in macro_news if a.get("title")]
+    scores = engine.score_batch(titles)
+    avg_score = sum(s["compound"] for s in scores) / len(scores) if scores else 0.0
     sentiment_word = (
         "optimistic"
         if avg_score > 0.15
@@ -132,14 +121,19 @@ a **comprehensive market outlook** in clean Markdown. Include:
 # ----------------------------------------------------------------------
 # 2️⃣  Ticker‑specific sentiment analysis
 # ----------------------------------------------------------------------
-def analyze_ticker_sentiment(ticker: str, news: list) -> str:
+def analyze_ticker_sentiment(ticker: str, news: list) -> tuple[str, list[dict]]:
     """
-    Uses the Alpha Vantage news‑sentiment endpoint.  If a sentiment score
+    Uses the Alpha Vantage news-sentiment endpoint. If a sentiment score
     is present we weight the final recommendation by that score, otherwise
-    we fall back to the classic VADER approach.
+    we fall back to FinBERT.
+
+    Returns (advice_string, per_headline_scores).
     """
     if not news:
-        return "[yellow]No recent news found. Hold current position.[/yellow]"
+        return (
+            "[yellow]No recent news found. Hold current position.[/yellow]",
+            [],
+        )
 
     # ------------------------------------------------------------------
     # Build a nice headline block for the Gemini prompt (same as before)
@@ -175,36 +169,39 @@ def analyze_ticker_sentiment(ticker: str, news: list) -> str:
 
     gemini_response = _gemini_generate(prompt)
     if gemini_response:
-        return gemini_response.strip()
+        return gemini_response.strip(), []
 
     # ------------------------------------------------------------------
-    # Fallback – VADER + simple averaging of Alpha sentiment scores
+    # Fallback – FinBERT + simple averaging of Alpha sentiment scores
     # ------------------------------------------------------------------
-    # If Alpha gave us numeric scores we blend them with VADER.
+    # If Alpha gave us numeric scores we blend them with FinBERT.
     if sentiment_scores:
-        # Alpha scores are already in the range −1..1
+        # Alpha scores are already in the range -1..1
         alpha_avg = sum(sentiment_scores) / len(sentiment_scores)
     else:
         alpha_avg = 0.0
 
-    # VADER part (as before)
-    total_compound = 0.0
-    valid = 0
-    for a in news:
-        title = a.get("title", "")
-        if title:
-            total_compound += sia.polarity_scores(title)["compound"]
-            valid += 1
-    vader_avg = total_compound / valid if valid else 0.0
+    # FinBERT part
+    engine = get_sentiment_engine()
+    titles = [a.get("title", "") for a in news if a.get("title")]
+    headline_scores = engine.score_batch(titles)
+    finbert_avg = (
+        sum(s["compound"] for s in headline_scores) / len(headline_scores)
+        if headline_scores
+        else 0.0
+    )
 
-    # Blend – 70 % Alpha, 30 % VADER (feel free to tweak)
-    blended = 0.7 * alpha_avg + 0.3 * vader_avg
+    # Blend – 70% Alpha, 30% FinBERT
+    blended = 0.7 * alpha_avg + 0.3 * finbert_avg
 
     if blended >= 0.20:
-        return f"[bold green]Bullish (Score: {blended:.2f})[/bold green] – consider buying or holding."
-    if blended <= -0.20:
-        return f"[bold red]Bearish (Score: {blended:.2f})[/bold red] – consider reducing exposure."
-    return f"[bold yellow]Neutral (Score: {blended:.2f})[/bold yellow] – maintain current position."
+        advice = f"[bold green]Bullish (Score: {blended:.2f})[/bold green] – consider buying or holding."
+    elif blended <= -0.20:
+        advice = f"[bold red]Bearish (Score: {blended:.2f})[/bold red] – consider reducing exposure."
+    else:
+        advice = f"[bold yellow]Neutral (Score: {blended:.2f})[/bold yellow] – maintain current position."
+
+    return advice, headline_scores
 
 
 # ----------------------------------------------------------------------

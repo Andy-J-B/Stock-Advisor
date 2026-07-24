@@ -25,8 +25,10 @@ mdit-py-plugins==0.5.0
 mdurl==0.1.2
 multitasking==0.0.13
 nltk==3.9.4
-numpy==2.4.4
+numpy==2.2.6
+packaging==26.2
 pandas==3.0.2
+pandas-ta==0.4.71b0
 peewee==4.0.5
 platformdirs==4.9.6
 plotext==5.3.2
@@ -37,6 +39,7 @@ pycparser==3.0
 pydantic==2.13.3
 pydantic_core==2.46.3
 Pygments==2.20.0
+PyPortfolioOpt==1.6.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
 pytz==2026.1.post1

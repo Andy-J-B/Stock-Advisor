@@ -186,11 +186,23 @@ def log_net_worth():
     fx_rate = data_client.get_usd_to_cad()
     total = 0.0
 
+    # Collect all tickers across accounts for batch pricing
+    all_tickers = []
+    accounts_with_holdings = []
     for acc in accounts:
+        tickers = [h.ticker for h in acc.holdings]
+        if tickers:
+            accounts_with_holdings.append((acc, tickers))
+            all_tickers.extend(tickers)
+    all_tickers = list(dict.fromkeys(all_tickers))  # dedupe, preserve order
+
+    prices = data_client.get_current_prices_batch(all_tickers) if all_tickers else {}
+
+    for acc, _ in accounts_with_holdings:
         multiplier = fx_rate if acc.name == "USD" else 1.0
         total += acc.cash * multiplier
         for h in acc.holdings:
-            live_price, _ = data_client.get_current_price(h.ticker)
+            live_price, _ = prices.get(h.ticker, (0.0, 0.0))
             if live_price > 0:
                 total += (h.shares * live_price) * multiplier
 

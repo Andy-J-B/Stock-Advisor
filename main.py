@@ -242,6 +242,19 @@ def view_portfolio(
 
     accounts_to_show = [account.upper()] if account.upper() != "ALL" else list(accounts.keys())
 
+    # Collect all tickers across accounts we'll show
+    all_tickers: list[str] = []
+    for acc_name in accounts_to_show:
+        if acc_name in accounts:
+            all_tickers.extend(accounts[acc_name].get("holdings", {}).keys())
+    all_tickers = list(dict.fromkeys(all_tickers))  # dedupe, preserve order
+
+    # Batch-fetch all live prices in parallel
+    prices: dict[str, tuple[float, float]] = {}
+    if all_tickers:
+        with console.status("[bold green]Fetching live prices...[/bold green]"):
+            prices = data_client.get_current_prices_batch(all_tickers)
+
     grand = {"value": 0.0, "cost": 0.0, "cash": 0.0, "initial": 0.0, "day_chg": 0.0}
 
     for acc_name in accounts_to_show:
@@ -266,19 +279,18 @@ def view_portfolio(
         table = _build_account_table(acc_name, multiplier)
         acc_cost = acc_market = acc_day = 0.0
 
-        with console.status(f"[bold green]Pricing {acc_name} holdings...[/bold green]"):
-            for ticker, data in holdings.items():
-                live_price, prev_close = data_client.get_current_price(ticker)
-                row, metrics = _build_holding_row(
-                    ticker, data["shares"], data["avg_price"], live_price, prev_close
-                )
-                table.add_row(*row)
-                acc_cost += metrics["cost"]
-                acc_market += metrics["value"]
-                acc_day += metrics["day_chg"]
-                grand["value"] += metrics["value"] * multiplier
-                grand["cost"] += metrics["cost"] * multiplier
-                grand["day_chg"] += metrics["day_chg"] * multiplier
+        for ticker, data in holdings.items():
+            live_price, prev_close = prices.get(ticker, (0.0, 0.0))
+            row, metrics = _build_holding_row(
+                ticker, data["shares"], data["avg_price"], live_price, prev_close
+            )
+            table.add_row(*row)
+            acc_cost += metrics["cost"]
+            acc_market += metrics["value"]
+            acc_day += metrics["day_chg"]
+            grand["value"] += metrics["value"] * multiplier
+            grand["cost"] += metrics["cost"] * multiplier
+            grand["day_chg"] += metrics["day_chg"] * multiplier
 
         console.print(table)
         _print_account_summary(cash, initial_cash, acc_cost, acc_market, acc_day)
@@ -393,8 +405,11 @@ def portfolio_news():
 
     console.print(f"Fetching news for: [bold cyan]{', '.join(tickers)}[/bold cyan]\n")
 
+    with console.status("[bold green]Fetching news...[/bold green]"):
+        news_batch = data_client.get_ticker_news_batch(tickers)
+
     for ticker in tickers:
-        news = data_client.get_ticker_news(ticker)
+        news = news_batch.get(ticker, [])
         advice = advisor.analyze_ticker_sentiment(ticker, news)
         console.print(f"[bold]{ticker} Update:[/bold] {advice}")
         console.print("-" * 40)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any, Optional
 
 from peewee import (
     SqliteDatabase,
@@ -61,10 +62,16 @@ class Setting(BaseModel):
     value = TextField()
 
 
+class CacheEntry(BaseModel):
+    key = CharField(unique=True, max_length=256)
+    value = TextField()
+    fetched_at = DateTimeField(default=datetime.now)
+
+
 def init_db(skip_migration: bool = False):
     if db.is_closed():
         db.connect()
-    db.create_tables([Account, Holding, Transaction, NetWorthSnapshot, Setting], safe=True)
+    db.create_tables([Account, Holding, Transaction, NetWorthSnapshot, Setting, CacheEntry], safe=True)
     if not skip_migration:
         _migrate_from_json()
 
@@ -122,3 +129,32 @@ def _migrate_from_json():
                 Setting.get_or_create(key=key, defaults={"value": json.dumps(val)})
             else:
                 Setting.get_or_create(key=key, defaults={"value": str(val)})
+
+
+# ---------------------------------------------------------------------------
+# Cache helpers – generic key/value cache backed by SQLite
+# ---------------------------------------------------------------------------
+
+def cache_get(key: str, ttl_seconds: int) -> Optional[Any]:
+    """Return cached value if fresh, else None."""
+    try:
+        entry = CacheEntry.get(CacheEntry.key == key)
+        age = (datetime.now() - entry.fetched_at).total_seconds()
+        if age < ttl_seconds:
+            return json.loads(entry.value)
+    except (CacheEntry.DoesNotExist, json.JSONDecodeError):
+        pass
+    return None
+
+
+def cache_set(key: str, value: Any) -> None:
+    """Store a JSON-serializable value in the cache (upsert)."""
+    serialized = json.dumps(value)
+    entry, created = CacheEntry.get_or_create(
+        key=key,
+        defaults={"value": serialized, "fetched_at": datetime.now()},
+    )
+    if not created:
+        entry.value = serialized
+        entry.fetched_at = datetime.now()
+        entry.save()

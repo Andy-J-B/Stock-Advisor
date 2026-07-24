@@ -7,6 +7,7 @@ from rich.panel import Panel
 from dotenv import load_dotenv
 from rich.markdown import Markdown
 from src import setup, portfolio, advisor, config, data_client, __version__
+from src import risk, indicators, optimizer
 
 load_dotenv()
 
@@ -377,6 +378,135 @@ def analyze():
         advice = advisor.evaluate_portfolio(current_portfolio, user_settings)
 
     console.print(advice)
+
+    # -- Risk & Signals panel ------------------------------------------------
+    tickers = []
+    for acc in accounts.values():
+        tickers.extend(acc.get("holdings", {}).keys())
+    tickers = list(dict.fromkeys(tickers))
+
+    if not tickers:
+        return
+
+    with console.status("[bold green]Fetching historical prices...[/bold green]"):
+        close_df = data_client.get_close_prices(tickers, period="1y")
+
+    if close_df.empty or close_df.shape[0] < 5:
+        console.print("[yellow]Not enough price history for risk analysis.[/yellow]")
+        return
+
+    # Portfolio-level risk metrics (equal-weight proxy)
+    port_ret = close_df.pct_change().dropna()
+    port_daily = port_ret.mean(axis=1)
+
+    risk_table = Table(
+        title="[bold]Portfolio Risk Metrics (1Y)[/bold]",
+        border_style="bright_magenta",
+    )
+    risk_table.add_column("Metric", style="cyan")
+    risk_table.add_column("Value", justify="right")
+
+    risk_table.add_row("Sharpe Ratio", f"{risk.sharpe_ratio(port_daily):.2f}")
+    risk_table.add_row("Sortino Ratio", f"{risk.sortino_ratio(port_daily):.2f}")
+    risk_table.add_row("Max Drawdown", f"{risk.max_drawdown(close_df.mean(axis=1)):.2%}")
+    risk_table.add_row("VaR (95%)", f"{risk.historical_var(port_daily):.2%}")
+    risk_table.add_row("CVaR (95%)", f"{risk.cvar(port_daily):.2%}")
+    console.print(risk_table)
+
+    # Per-ticker technical signals
+    for ticker in tickers:
+        if ticker not in close_df.columns:
+            continue
+        hist = data_client.get_price_history(ticker, period="1y")
+        if hist.empty or hist.shape[0] < 50:
+            continue
+        indicators.compute_indicators(hist)
+        sigs = indicators.interpret_signals(hist)
+        if not sigs:
+            continue
+        sig_table = Table(
+            title=f"[bold]{ticker} Technical Signals[/bold]",
+            border_style="bright_cyan",
+        )
+        sig_table.add_column("Indicator", style="cyan")
+        sig_table.add_column("Value", justify="right")
+        sig_table.add_column("Signal", justify="right")
+        for s in sigs:
+            sig_table.add_row(s["name"], s["value"], s["signal"])
+        console.print(sig_table)
+
+
+@app.command("optimize-portfolio")
+def optimize_portfolio(
+    objective: str = typer.Option(
+        "max-sharpe", "--objective", "-o",
+        help="Optimization objective: max-sharpe, min-volatility, efficient-risk",
+    ),
+    target_volatility: float = typer.Option(
+        None, "--target-volatility", "-t",
+        help="Target annual volatility (for efficient-risk objective).",
+    ),
+):
+    """Suggest optimal portfolio weights using mean-variance optimization."""
+    current_portfolio = portfolio.load()
+    accounts = current_portfolio.get("accounts", {})
+
+    tickers = []
+    for acc in accounts.values():
+        tickers.extend(acc.get("holdings", {}).keys())
+    tickers = list(dict.fromkeys(tickers))
+
+    if len(tickers) < 2:
+        console.print("[yellow]Need at least 2 unique tickers to optimize.[/yellow]")
+        return
+
+    with console.status("[bold green]Fetching price history...[/bold green]"):
+        close_df = data_client.get_close_prices(tickers, period="1y")
+
+    if close_df.empty or close_df.shape[0] < 30:
+        console.print("[yellow]Not enough price history (need ~30+ trading days).[/yellow]")
+        return
+
+    try:
+        result = optimizer.optimize(close_df, objective, target_volatility)
+    except (ValueError, Exception) as e:
+        console.print(f"[red]Optimization failed: {e}[/red]")
+        raise typer.Exit()
+
+    # Weights table
+    wt = Table(title=f"[bold]Optimal Allocation ({objective})[/bold]", border_style="bright_green")
+    wt.add_column("Ticker", style="cyan")
+    wt.add_column("Weight", justify="right")
+    for t, w in sorted(result["weights"].items(), key=lambda x: -x[1]):
+        if w > 0:
+            wt.add_row(t, f"{w:.1%}")
+    console.print(wt)
+
+    console.print(f"  Expected annual return: [green]{result['expected_return']:.1%}[/green]")
+    console.print(f"  Annual volatility:      {result['volatility']:.1%}")
+    console.print(f"  Sharpe ratio:           [bold]{result['sharpe']:.2f}[/bold]")
+
+    # Discrete allocation
+    total_cash = sum(acc.get("cash", 0.0) for acc in accounts.values())
+    if total_cash <= 0:
+        return
+
+    with console.status("[bold green]Computing share allocation...[/bold green]"):
+        try:
+            alloc = optimizer.discrete_allocation(result["weights"], close_df, total_cash)
+        except Exception:
+            return
+
+    if alloc["allocations"]:
+        at = Table(title=f"[bold]Discrete Allocation (${total_cash:,.0f} available)[/bold]")
+        at.add_column("Ticker", style="cyan")
+        at.add_column("Shares", justify="right")
+        at.add_column("Approx Cost", justify="right")
+        for t, shares in alloc["allocations"].items():
+            latest = close_df[t].iloc[-1] if t in close_df.columns else 0
+            at.add_row(t, str(shares), f"${shares * latest:,.0f}")
+        at.add_row("[dim]Leftover[/dim]", "", f"${alloc['leftover']:,.0f}")
+        console.print(at)
 
 
 @app.command()

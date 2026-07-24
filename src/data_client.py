@@ -3,6 +3,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import pandas as pd
 import yfinance as yf
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -25,6 +26,7 @@ TTL_FX = 3600          # 1 h – exchange rates
 TTL_NEWS = 3600        # 1 h – news headlines
 TTL_INFO = 86400       # 24 h – ticker fundamentals
 TTL_METRICS = 86400    # 24 h – advanced metrics
+TTL_HISTORY = 3600      # 1 h – daily OHLCV bars
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +109,67 @@ def get_current_prices_batch(tickers: list[str]) -> dict[str, tuple[float, float
     with ThreadPoolExecutor(max_workers=min(len(tickers), 10)) as pool:
         results = list(pool.map(get_current_price, tickers))
     return dict(zip(tickers, results))
+
+
+# ---------------------------------------------------------------------------
+# Historical prices
+# ---------------------------------------------------------------------------
+
+def get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame:
+    """Fetch daily OHLCV history for *ticker* (cached 1 h).
+
+    Returns a DataFrame indexed by date with columns:
+    Open, High, Low, Close, Volume.
+    """
+    cache_key = f"history:{ticker}:{period}"
+    cached = cache_get(cache_key, TTL_HISTORY)
+    if cached is not None:
+        if not cached.get("dates"):
+            return pd.DataFrame()
+        return pd.DataFrame(
+            cached["data"], index=pd.DatetimeIndex(cached["dates"])
+        )
+
+    try:
+        df = yf.Ticker(ticker).history(period=period)
+        if df is not None and not df.empty:
+            cols = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
+            result = {
+                "dates": [str(d) for d in df.index],
+                "data": {c: df[c].tolist() for c in cols},
+            }
+        else:
+            result = {"dates": [], "data": {}}
+    except Exception:
+        result = {"dates": [], "data": {}}
+
+    cache_set(cache_key, result)
+
+    if result["dates"]:
+        return pd.DataFrame(
+            result["data"], index=pd.DatetimeIndex(result["dates"])
+        )
+    return pd.DataFrame()
+
+
+def get_close_prices(
+    tickers: list[str], period: str = "1y"
+) -> pd.DataFrame:
+    """Fetch aligned daily close prices for multiple tickers.
+
+    Returns a DataFrame with tickers as columns and a shared date index.
+    Rows with any NaN are dropped.
+    """
+    if not tickers:
+        return pd.DataFrame()
+    frames = {}
+    for ticker in tickers:
+        df = get_price_history(ticker, period)
+        if not df.empty and "Close" in df.columns:
+            frames[ticker] = df["Close"]
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, axis=1).dropna()
 
 
 # ---------------------------------------------------------------------------

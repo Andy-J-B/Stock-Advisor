@@ -1,7 +1,8 @@
 """Tests for portfolio operations using an in-memory SQLite database."""
 
 import pytest
-from src.database import init_db, db, Account, Holding, NetWorthSnapshot
+from unittest.mock import patch
+from src.database import init_db, db, Account, Holding, NetWorthSnapshot, CacheEntry
 from src import portfolio
 
 
@@ -14,7 +15,7 @@ def fresh_db():
     db.connect()
     init_db(skip_migration=True)
     yield
-    db.drop_tables([Account, Holding, NetWorthSnapshot])
+    db.drop_tables([Account, Holding, NetWorthSnapshot, CacheEntry])
     db.close()
 
 
@@ -311,7 +312,11 @@ def test_get_account_holdings_nonexistent():
 def test_log_net_worth():
     portfolio.add_position("CAD", "VFV.TO", 10, 50.0)
     portfolio.update_cash("CAD", 1000.0)
-    portfolio.log_net_worth()
+    # Mock batch to avoid threading + in-memory DB issues
+    def _seq_batch(tickers):
+        return {t: (0.0, 0.0) for t in tickers}
+    with patch("src.data_client.get_current_prices_batch", side_effect=_seq_batch):
+        portfolio.log_net_worth()
     history = portfolio.get_history()
     assert len(history) >= 1
 

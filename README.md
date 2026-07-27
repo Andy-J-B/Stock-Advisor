@@ -9,7 +9,7 @@ A Python CLI tool for managing stock portfolios, tracking live prices across mul
 - **Terminal UI:** [Rich](https://rich.readthedocs.io/)
 - **Database:** [Peewee](http://docs.peewee-orm.com/) (SQLite)
 - **Market Data:** [yfinance](https://pypi.org/project/yfinance/) + [Alpha Vantage](https://www.alphavantage.co/)
-- **Technical Indicators:** [pandas-ta](https://github.com/twopirllc/pandas-ta)
+- **Technical Indicators:** Pure pandas (RSI, MACD, Bollinger Bands, EMA, ATR)
 - **Portfolio Optimization:** [PyPortfolioOpt](https://github.com/robertmartin8/PyPortfolioOpt)
 - **Sentiment Analysis:** [FinBERT](https://huggingface.co/ProsusAI/finbert) (transformers + torch)
 - **ML Prediction:** [LightGBM](https://lightgbm.readthedocs.io/) + scikit-learn

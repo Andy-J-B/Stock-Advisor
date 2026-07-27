@@ -1,5 +1,6 @@
 import csv
 import io
+import time
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -7,7 +8,7 @@ from rich.panel import Panel
 from dotenv import load_dotenv
 from rich.markdown import Markdown
 from src import setup, portfolio, advisor, config, data_client, __version__
-from src import risk, indicators, optimizer
+from src import risk, indicators, optimizer, features, ml_model, anomaly
 
 load_dotenv()
 
@@ -507,6 +508,102 @@ def optimize_portfolio(
             at.add_row(t, str(shares), f"${shares * latest:,.0f}")
         at.add_row("[dim]Leftover[/dim]", "", f"${alloc['leftover']:,.0f}")
         console.print(at)
+
+
+@app.command()
+def predict(
+    ticker: str = typer.Argument(..., help="Ticker symbol to predict"),
+    horizon: int = typer.Option(
+        1, "--horizon", "-h", help="Prediction horizon in trading days (1 or 5)"
+    ),
+    retrain: bool = typer.Option(
+        False, "--retrain", "-r", help="Force model retraining"
+    ),
+    max_age: int = typer.Option(
+        7, "--max-age", help="Max model age in days before retrain"
+    ),
+):
+    """Predict next-day/week directional movement for a ticker."""
+    ticker = ticker.upper()
+    console.print(f"[bold blue]Predicting {ticker} ({horizon}-day horizon)...[/bold blue]")
+
+    # Fetch price history
+    with console.status("[bold green]Fetching price history...[/bold green]"):
+        ohlcv = data_client.get_price_history(ticker, period="2y")
+
+    if ohlcv.empty or ohlcv.shape[0] < 60:
+        console.print("[yellow]Not enough price history (need ~60+ days).[/yellow]")
+        raise typer.Exit()
+
+    # Build features
+    with console.status("[bold cyan]Building features...[/bold cyan]"):
+        feat = features.build_features(ohlcv)
+        target = features.build_target(ohlcv["Close"], horizon=horizon)
+
+    # Check if we need to train
+    stale = ml_model.is_stale(ticker, horizon, max_age_days=max_age)
+    if retrain or stale:
+        reason = "forced retrain" if retrain else "model missing or stale"
+        console.print(f"[yellow]Training model ({reason})...[/yellow]")
+
+        mask = target.notna() & feat.notna().all(axis=1)
+        X_train = feat.loc[mask]
+        y_train = target.loc[mask]
+
+        if len(X_train) < 30:
+            console.print("[red]Not enough labeled data to train (need 30+ rows).[/red]")
+            raise typer.Exit()
+
+        with console.status("[bold green]Training LightGBM...[/bold green]"):
+            result = ml_model.train(X_train, y_train)
+
+        ml_model.save_model(result["model"], ticker, horizon, metadata={
+            "cv_accuracy": result["cv_accuracy"],
+            "n_train": result["n_train"],
+        })
+        console.print(
+            f"  CV accuracy: [bold]{result['cv_accuracy']:.1%}[/bold] "
+            f"(walk-forward, {len(result['fold_accuracies'])} folds)"
+        )
+        model = result["model"]
+    else:
+        payload = ml_model.load_model(ticker, horizon)
+        model = payload["model"]
+        age_days = (time.time() - payload["trained_at"]) / 86400
+        console.print(f"  Using cached model ({age_days:.0f} days old)")
+
+    # Predict on latest row
+    latest_feat = feat.iloc[[-1]].dropna(axis=1)
+    if latest_feat.empty:
+        console.print("[yellow]Latest row has no valid features.[/yellow]")
+        raise typer.Exit()
+
+    pred = ml_model.predict(model, latest_feat.iloc[0])
+
+    # Display result
+    prob = pred["probability_up"]
+    label = pred["label"]
+    conf = pred["confidence"]
+
+    if label == "up":
+        console.print(
+            f"\n[bold green]Signal: UP[/bold green]  "
+            f"(probability {prob:.1%}, confidence {conf:.0%})"
+        )
+    else:
+        console.print(
+            f"\n[bold red]Signal: DOWN[/bold red]  "
+            f"(probability {1 - prob:.1%}, confidence {conf:.0%})"
+        )
+
+    # Load saved accuracy for caveat
+    payload = ml_model.load_model(ticker, horizon)
+    saved_acc = (payload or {}).get("metadata", {}).get("cv_accuracy")
+    if saved_acc is not None:
+        console.print(
+            f"\n[dim]Model holdout accuracy: {saved_acc:.1%} — "
+            f"treat as a weak signal, not a recommendation.[/dim]"
+        )
 
 
 @app.command()

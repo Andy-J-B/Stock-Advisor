@@ -8,7 +8,7 @@ from rich.panel import Panel
 from dotenv import load_dotenv
 from rich.markdown import Markdown
 from src import setup, portfolio, advisor, config, data_client, __version__
-from src import risk, indicators, optimizer, features, ml_model, anomaly
+from src import risk, indicators, optimizer, features, ml_model, anomaly, ticker_map
 
 load_dotenv()
 
@@ -662,13 +662,27 @@ def portfolio_news():
         console.print("[yellow]Your portfolio is empty. Nothing to analyze.[/yellow]")
         return
 
-    console.print(f"Fetching news for: [bold cyan]{', '.join(tickers)}[/bold cyan]\n")
+    # Resolve Canadian tickers to US equivalents for better news coverage.
+    ticker_us_map = ticker_map.resolve_tickers(tickers)
 
+    # Show mapping in status line
+    mapped_parts = []
+    for t in tickers:
+        us = ticker_us_map.get(t.upper(), t)
+        if us != t.upper():
+            mapped_parts.append(f"{t} (→ {us})")
+        else:
+            mapped_parts.append(t)
+    console.print(f"Fetching news for: [bold cyan]{', '.join(mapped_parts)}[/bold cyan]\n")
+
+    # Fetch news using US tickers for better coverage
+    us_tickers = [ticker_us_map.get(t.upper(), t) for t in tickers]
     with console.status("[bold green]Fetching news...[/bold green]"):
-        news_batch = data_client.get_ticker_news_batch(tickers)
+        news_batch = data_client.get_ticker_news_batch(us_tickers)
 
     for ticker in tickers:
-        news = news_batch.get(ticker, [])
+        us = ticker_us_map.get(ticker.upper(), ticker)
+        news = news_batch.get(us, [])
         advice, headline_scores = advisor.analyze_ticker_sentiment(ticker, news)
         console.print(f"[bold]{ticker} Update:[/bold] {advice}")
 

@@ -20,6 +20,7 @@ from .alpha_vantage import (
     get_daily_price as av_get_daily_price,
 )
 from . import data_client
+from .ticker_map import resolve_tickers
 
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -232,14 +233,19 @@ def evaluate_portfolio(current_portfolio: dict, user_settings: dict):
         tk.upper() for acc in accounts.values() for tk in acc.get("holdings", {}).keys()
     }
 
+    # Resolve Canadian tickers to US equivalents for Alpha Vantage calls.
+    # AV does not support .NE/.TO tickers (returns 0/empty).
+    ticker_us_map = resolve_tickers(list(tickers))
+
     ticker_news: dict[str, List[dict[str, Any]]] = {}
     sector_map: dict[str, str] = {}
     for t in tickers:
+        us = ticker_us_map.get(t, t)
         # news + sentiment (Alpha)
-        ticker_news[t] = av_get_ticker_news(t, limit=3)
+        ticker_news[t] = av_get_ticker_news(us, limit=3)
 
         # sector extraction – cheap, cached
-        ov = get_company_overview(t) or {}
+        ov = get_company_overview(us) or {}
         sector_map[t] = ov.get("Sector", "Other")
 
     # ----- sector exposure (value‑weighted) -----------------------------
@@ -247,7 +253,8 @@ def evaluate_portfolio(current_portfolio: dict, user_settings: dict):
     total_portfolio_value = 0.0
     for acc in accounts.values():
         for t, data in acc.get("holdings", {}).items():
-            price, _ = av_get_daily_price(t)
+            us = ticker_us_map.get(t.upper(), t)
+            price, _ = av_get_daily_price(us)
             if price == 0.0:
                 price, _ = data_client.get_current_price(t)
             pos_value = price * data["shares"]

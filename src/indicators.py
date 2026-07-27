@@ -1,5 +1,5 @@
 """
-Technical indicator pipeline using pandas-ta.
+Technical indicator pipeline — pure pandas implementation.
 
 Computes a standard set of indicators in one call and returns a
 human-readable summary dict for each indicator.
@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import pandas as pd
-import pandas_ta  # noqa: F401 – registers .ta accessor
 
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -18,13 +18,51 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     Expects columns: Open, High, Low, Close, Volume.
     Returns the same DataFrame with indicator columns appended.
+
+    Column names match pandas-ta conventions for backward compatibility:
+      MACD_12_26_9, MACDs_12_26_9, MACDh_12_26_9,
+      RSI_14, BBU_20_2.0_2.0, BBM_20_2.0_2.0, BBL_20_2.0_2.0,
+      ATRr_14, EMA_20, EMA_50
     """
-    df.ta.macd(append=True)
-    df.ta.rsi(append=True)
-    df.ta.bbands(length=20, append=True)
-    df.ta.atr(append=True)
-    df.ta.ema(length=20, append=True)
-    df.ta.ema(length=50, append=True)
+    close = df["Close"]
+    high = df["High"]
+    low = df["Low"]
+
+    # ── RSI 14 ──────────────────────────────────────────────────────
+    delta = close.diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs = gain / loss.replace(0, np.nan)
+    df["RSI_14"] = 100 - (100 / (1 + rs))
+
+    # ── MACD 12/26/9 ──────────────────────────────────────────────
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    macd_line = ema12 - ema26
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+    df["MACD_12_26_9"] = macd_line
+    df["MACDs_12_26_9"] = signal_line
+    df["MACDh_12_26_9"] = macd_line - signal_line
+
+    # ── Bollinger Bands 20/2.0 ─────────────────────────────────────
+    sma20 = close.rolling(20).mean()
+    std20 = close.rolling(20).std()
+    df["BBU_20_2.0_2.0"] = sma20 + 2.0 * std20
+    df["BBM_20_2.0_2.0"] = sma20
+    df["BBL_20_2.0_2.0"] = sma20 - 2.0 * std20
+
+    # ── ATR 14 ─────────────────────────────────────────────────────
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [high - low, (high - prev_close).abs(), (low - prev_close).abs()],
+        axis=1,
+    ).max(axis=1)
+    df["ATRr_14"] = tr.rolling(14).mean()
+
+    # ── EMA 20 / 50 ───────────────────────────────────────────────
+    df["EMA_20"] = close.ewm(span=20, adjust=False).mean()
+    df["EMA_50"] = close.ewm(span=50, adjust=False).mean()
+
     return df
 
 

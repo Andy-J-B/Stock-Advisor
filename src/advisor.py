@@ -19,6 +19,7 @@ from .alpha_vantage import (
     get_technical_indicator,
     get_daily_price as av_get_daily_price,
 )
+from . import data_client
 
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -247,6 +248,8 @@ def evaluate_portfolio(current_portfolio: dict, user_settings: dict):
     for acc in accounts.values():
         for t, data in acc.get("holdings", {}).items():
             price, _ = av_get_daily_price(t)
+            if price == 0.0:
+                price, _ = data_client.get_current_price(t)
             pos_value = price * data["shares"]
             total_portfolio_value += pos_value
             sector = sector_map.get(t.upper(), "Other")

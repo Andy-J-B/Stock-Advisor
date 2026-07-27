@@ -134,8 +134,12 @@ def get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame:
         df = yf.Ticker(ticker).history(period=period)
         if df is not None and not df.empty:
             cols = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
+            # Normalize to tz-naive UTC to avoid "Mixed timezones" errors in pandas 3.x
+            dates = df.index
+            if dates.tz is not None:
+                dates = dates.tz_convert("UTC").tz_localize(None)
             result = {
-                "dates": [str(d) for d in df.index],
+                "dates": [str(d) for d in dates],
                 "data": {c: df[c].tolist() for c in cols},
             }
         else:

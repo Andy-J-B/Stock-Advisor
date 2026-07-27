@@ -617,6 +617,38 @@ def market_update():
 
     console.print(Panel(recommendations, title="Market Update", expand=False))
 
+    # -- Anomaly detection on portfolio holdings ---------------------------
+    current_portfolio = portfolio.load()
+    tickers = []
+    for acc in current_portfolio.get("accounts", {}).values():
+        tickers.extend(acc.get("holdings", {}).keys())
+    tickers = list(dict.fromkeys(tickers))
+
+    if not tickers:
+        return
+
+    with console.status("[bold green]Scanning for anomalies...[/bold green]"):
+        anomalies_found: list[str] = []
+        for ticker in tickers:
+            ohlcv = data_client.get_price_history(ticker, period="6mo")
+            if ohlcv.empty or ohlcv.shape[0] < 30:
+                continue
+            feat = features.build_features(ohlcv)
+            flagged = anomaly.detect_anomalies(feat)
+            if not flagged.empty:
+                summary = anomaly.summarize_anomalies(flagged, ticker)
+                if summary:
+                    anomalies_found.append(summary)
+
+    if anomalies_found:
+        console.print(
+            Panel(
+                "\n\n".join(anomalies_found),
+                title="[bold yellow]Anomaly Alerts[/bold yellow]",
+                border_style="yellow",
+            )
+        )
+
 
 @app.command()
 def portfolio_news():

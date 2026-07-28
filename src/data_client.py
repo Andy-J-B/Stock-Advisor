@@ -292,10 +292,15 @@ def get_ticker_news(ticker: str, limit: int = 3) -> list:
 
     try:
         stock = yf.Ticker(ticker)
-        result = [
-            {"title": a.get("title", ""), "publisher": a.get("publisher", ""), "link": a.get("link", "")}
-            for a in stock.news[:limit]
-        ]
+        result = []
+        for a in stock.news[:limit]:
+            # yfinance nests news under "content" — handle both old and new formats
+            c = a.get("content") or a
+            result.append({
+                "title": c.get("title", ""),
+                "publisher": (c.get("provider") or {}).get("displayName", ""),
+                "link": (c.get("canonicalUrl") or c.get("clickThroughUrl") or {}).get("url", ""),
+            })
     except Exception:
         result = [{"title": f"Could not fetch news for {ticker}.", "publisher": "System"}]
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import json
 import warnings
+from datetime import date
 from typing import Any, List
 from google import genai
 from rich.panel import Panel
@@ -413,6 +414,7 @@ def generate_stock_report(ticker: str, current_portfolio: dict) -> str:
 Role: Senior Equity Research Analyst (Value & Growth focus).
 
 **TICKER:** {ticker.upper()}
+**DATE:** {date.today().strftime('%B %d, %Y')}
 **PORTFOLIO CONTEXT:** {position_info}
 
 **FUNDAMENTAL SNAPSHOT**

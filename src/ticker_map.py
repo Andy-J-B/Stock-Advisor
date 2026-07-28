@@ -36,6 +36,18 @@ TTL_TICKER_MAP = 86400 * 30
 
 _CANADIAN_SUFFIXES = (".NE", ".TO")
 
+# Fallback news search terms for Canadian tickers that don't resolve to US equivalents.
+# Maps ticker → (display label, yfinance ticker to fetch news from).
+_NEWS_FALLBACK: Dict[str, tuple[str, str]] = {
+    "KILO-B.TO": ("gold", "GLD"),
+    "KILO.TO": ("gold", "GLD"),
+    "VFV.TO": ("S&P 500", "SPY"),
+    "VCE.TO": ("Canadian market", "XIU.TO"),
+    "XIU.TO": ("Canadian market", "XIU.TO"),
+    "XIC.TO": ("Canadian market", "XIC.TO"),
+    "ATRL.TO": ("AtkinsRealis", "ATRL.TO"),
+}
+
 
 def _is_canadian(ticker: str) -> bool:
     return any(ticker.upper().endswith(s) for s in _CANADIAN_SUFFIXES)
@@ -107,3 +119,14 @@ def resolve_tickers(tickers: list[str]) -> Dict[str, str]:
         t_upper = t.upper().strip()
         result[t_upper] = resolve_us_ticker(t_upper)
     return result
+
+
+def get_news_fallback(ticker: str) -> tuple[str, str] | None:
+    """
+    Return fallback (label, yfinance_ticker) for a ticker with no US equivalent.
+
+    Used when yfinance returns no news for a Canadian ticker, so we can
+    fetch news from a related ETF/index (e.g. GLD for gold holdings).
+    Returns None if no fallback is defined.
+    """
+    return _NEWS_FALLBACK.get(ticker.upper().strip())

@@ -686,6 +686,17 @@ def portfolio_news():
     for ticker in tickers:
         us = ticker_us_map.get(ticker.upper(), ticker)
         news = news_batch.get(us, [])
+
+        # Fallback: if no news and ticker has a known underlying (e.g. gold ETF)
+        if not news:
+            fb = ticker_map.get_news_fallback(ticker)
+            if fb:
+                label, fb_ticker = fb
+                fb_news = data_client.get_ticker_news(fb_ticker, limit=5)
+                if fb_news:
+                    news = fb_news
+                    console.print(f"  [dim]No direct news — showing {label} market news instead[/dim]")
+
         advice, headline_scores = advisor.analyze_ticker_sentiment(ticker, news)
         console.print(f"[bold]{ticker} Update:[/bold] {advice}")
 

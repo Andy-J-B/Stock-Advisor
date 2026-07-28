@@ -540,14 +540,17 @@ def predict(
         feat = features.build_features(ohlcv)
         target = features.build_target(ohlcv["Close"], horizon=horizon)
 
+    # Drop columns that are entirely NaN (e.g. sentiment/macro when not provided)
+    feat_clean = feat.dropna(axis=1, how="all")
+
     # Check if we need to train
     stale = ml_model.is_stale(ticker, horizon, max_age_days=max_age)
     if retrain or stale:
         reason = "forced retrain" if retrain else "model missing or stale"
         console.print(f"[yellow]Training model ({reason})...[/yellow]")
 
-        mask = target.notna() & feat.notna().all(axis=1)
-        X_train = feat.loc[mask]
+        mask = target.notna() & feat_clean.notna().all(axis=1)
+        X_train = feat_clean.loc[mask]
         y_train = target.loc[mask]
 
         if len(X_train) < 30:
@@ -573,7 +576,7 @@ def predict(
         console.print(f"  Using cached model ({age_days:.0f} days old)")
 
     # Predict on latest row
-    latest_feat = feat.iloc[[-1]].dropna(axis=1)
+    latest_feat = feat_clean.iloc[[-1]].dropna(axis=1)
     if latest_feat.empty:
         console.print("[yellow]Latest row has no valid features.[/yellow]")
         raise typer.Exit()

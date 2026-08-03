@@ -29,7 +29,40 @@ python main.py   # runs setup wizard on first launch
 
 > **Note:** FinBERT downloads ~440 MB on first use (model weights). Subsequent runs use the cached model.
 
+## Configuration
+
+Create a `.env` file in the project root for optional API keys:
+
+| Variable | Used for |
+|---|---|
+| `GEMINI_API_KEY` | AI deep-dive reports (`research`) and rebalancing suggestions |
+| `ALPHAVANTAGE_API_KEY` | Fallback price/news provider alongside yfinance |
+| `FINNHUB_API_KEY` / `NEWSAPI_API_KEY` / `FMP_API_KEY` | Optional extra news providers |
+
+Without `GEMINI_API_KEY`, the `research` and `rebalance` commands fall back to a locally-computed analysis instead of an AI report.
+
+## Interactive Launcher
+
+Prefer pointing and clicking over typing? Run the launcher to see every command
+with a one-line description and run it interactively — pick a number or type a
+full command line:
+
+```bash
+.venv/bin/python launcher.py
+```
+
 ## Commands
+
+### Analysis & Advice
+
+| Command | Description |
+|---|---|
+| `analyze` | Full portfolio review: risk metrics, technical indicators, FinBERT sentiment, allocation |
+| `optimize-portfolio` | Mean-variance optimization (max-sharpe, min-volatility, efficient-risk) |
+| `predict AAPL` | LightGBM directional prediction (1-day or 5-day horizon) with walk-forward CV |
+| `market-update` | Macro news sentiment + anomaly detection on portfolio holdings |
+| `portfolio-news` | Per-ticker news sentiment with headline-level breakdown |
+| `research AAPL` | Deep dive on a single ticker |
 
 ### Portfolio Management
 
@@ -43,17 +76,7 @@ python main.py   # runs setup wizard on first launch
 | `set-initial 50000 --account USD` | Set initial cash balance |
 | `update-cash 1000 --account USD` | Adjust cash balance |
 | `export` | Export portfolio to CSV |
-
-### Analysis & Advice
-
-| Command | Description |
-|---|---|
-| `analyze` | Full portfolio review: risk metrics, technical indicators, FinBERT sentiment, allocation |
-| `optimize-portfolio` | Mean-variance optimization (max-sharpe, min-volatility, efficient-risk) |
-| `predict AAPL` | LightGBM directional prediction (1-day or 5-day horizon) with walk-forward CV |
-| `market-update` | Macro news sentiment + anomaly detection on portfolio holdings |
-| `portfolio-news` | Per-ticker news sentiment with headline-level breakdown |
-| `research AAPL` | Deep dive on a single ticker |
+| `dividends` | Show projected annual dividend income from holdings |
 
 ### Configuration
 
@@ -61,7 +84,6 @@ python main.py   # runs setup wizard on first launch
 |---|---|
 | `settings` | View/update risk allocation (conservative/moderate/aggressive) |
 | `rebalance` | Suggest rebalancing trades to match target allocation |
-| `dividends` | Show dividend history for portfolio holdings |
 
 ### TUI
 
@@ -74,11 +96,13 @@ python main.py   # runs setup wizard on first launch
 ```
 stock_advisor/
 ├── main.py                     # Typer CLI entry point
+├── launcher.py                 # Interactive command menu
 ├── requirements.txt
 ├── data/                       # Local storage (git-ignored)
 │   ├── settings.json
 │   └── portfolio.json
 ├── models/                     # Persisted ML models (git-ignored)
+├── tui/                        # Textual dashboard app
 └── src/
     ├── __init__.py
     ├── setup.py                # First-run wizard
@@ -88,26 +112,40 @@ stock_advisor/
     ├── data_client.py          # yfinance + Alpha Vantage data fetching
     ├── providers.py            # DataProvider protocol + adapters
     ├── alpha_vantage.py        # Alpha Vantage API client
+    ├── ticker_map.py           # Canadian (.NE/.TO) → US ticker resolution
     ├── advisor.py              # Sentiment analysis orchestrator
     ├── sentiment.py            # FinBERT sentiment engine (singleton + caching)
-    ├── indicators.py           # pandas-ta indicator pipeline (RSI, MACD, BB, EMA, ATR)
+    ├── indicators.py           # Pure pandas indicators (RSI, MACD, BB, EMA, ATR)
     ├── risk.py                 # VaR, CVaR, Sharpe, Sortino, Max Drawdown
     ├── optimizer.py            # PyPortfolioOpt wrapper + discrete allocation
     ├── features.py             # Lagged feature engineering (no lookahead bias)
     ├── ml_model.py             # LightGBM classifier (train/predict/save/load)
-    ├── anomaly.py              # Isolation Forest + GMM anomaly detection
-    └── providers.py            # Data provider protocol
+    └── anomaly.py              # Isolation Forest + GMM anomaly detection
 ```
+
+## Canadian Ticker Handling
+
+Portfolios hold Canadian-listed securities as CDRs (`.NE`, e.g. `MSFT.NE`,
+`VISA.NE`) and ETFs/companies (`.TO`, e.g. `VFV.TO`, `BRK.TO`). Alpha Vantage
+does not support these suffixes and news coverage is thinner, so:
+
+- `src/ticker_map.py` resolves each ticker to its US equivalent
+  (`VISA.NE → V`, `BRK.TO → BRK-B`) using a static map, CDR base-stripping, and
+  a yfinance exchange check, cached 30 days in the database.
+- `portfolio-news` shows the mapping (`MSFT.NE (→ MSFT)`) and uses the US
+  ticker when fetching headlines.
+- Unresolved Canadian tickers fall back to a related market's news
+  (`KILO-B.TO → GLD` gold news, `VFV.TO → SPY`, `VCE.TO → XIU.TO`).
 
 ## How It Works
 
 ### Caching
 
-All market data is cached locally in SQLite via Peewee (`CacheEntry` model) with configurable TTLs (prices: 5 min, news: 1 hour, sentiment: 24 h). Parallel fetching uses `ThreadPoolExecutor` for batch operations.
+All market data is cached locally in SQLite via Peewee (`CacheEntry` model) with configurable TTLs (prices: 5 min, news: 1 hour, sentiment: 24 h, ticker resolution: 30 days). Parallel fetching uses `ThreadPoolExecutor` for batch operations. News is fetched through yfinance's headline feed (data nested under the `content` field in current API versions) and cached per-ticker/limit.
 
 ### Technical Indicators
 
-`indicators.compute_indicators()` appends RSI, MACD (12/26/9), Bollinger Bands (20/2), ATR, and EMA 20/50 to any OHLCV DataFrame. `interpret_signals()` produces a human-readable signal summary.
+`indicators.compute_indicators()` appends RSI, MACD (12/26/9), Bollinger Bands (20/2), ATR, and EMA 20/50 to any OHLCV DataFrame. `interpret_signals()` produces a human-readable signal summary. The implementation is pure pandas — no `pandas-ta` dependency.
 
 ### Sentiment
 
@@ -135,10 +173,10 @@ PyPortfolioOpt wrapper supports max-sharpe, min-volatility, and efficient-risk o
 .venv/bin/python -m pytest tests/ -v
 ```
 
-164 tests covering cache, database, portfolio, indicators, risk, optimizer, sentiment, features, ML model, and anomaly detection.
+180 tests covering cache, database, portfolio, indicators, risk, optimizer, sentiment, features, ML model, anomaly detection, and Canadian→US ticker mapping.
 
 ## Roadmap
 
 - [ ] Backtesting engine (vectorbt + YAML strategy specs)
 - [ ] Historical net worth tracking / charting
-- [ ] Export to CSV
+- [ ] Live quotes in the TUI dashboard

@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from rich.markdown import Markdown
 from src import setup, portfolio, advisor, config, data_client, __version__
 from src import risk, indicators, optimizer, features, ml_model, anomaly, ticker_map
+from src import screener
 
 load_dotenv()
 
@@ -914,6 +915,82 @@ def rebalance():
         suggestions = advisor.evaluate_portfolio(current_portfolio, user_settings)
 
     console.print(Panel(suggestions, title="🧹 Rebalancing Suggestions", border_style="green"))
+
+
+@app.command("top-buys")
+def top_buys(
+    universe: str = typer.Option(
+        "sp500", "--universe", "-u",
+        help="Universe to screen: sp500, tsx60 (or use --tickers for a custom list).",
+    ),
+    limit: int = typer.Option(
+        10, "--limit", "-l", help="How many top picks to show (default: 10)."
+    ),
+    tickers: str = typer.Option(
+        None, "--tickers", "-t",
+        help="Comma-separated tickers to screen instead of a universe (e.g. MSFT,NVDA,RY.TO).",
+    ),
+    min_analysts: int = typer.Option(
+        3, "--min-analysts", help="Minimum analyst coverage to consider a pick."
+    ),
+    deep: bool = typer.Option(
+        True, "--deep/--no-deep",
+        help="Generate an AI deep-dive (\"why buy now\") for the top picks.",
+    ),
+):
+    """Screen for stocks analysts love right now (strong buys with upside)."""
+    with console.status("[bold green]Fetching universe...[/bold green]"):
+        try:
+            picks = screener.screen(
+                universe=universe,
+                custom=tickers,
+                limit=limit,
+                min_analysts=min_analysts,
+            )
+        except ValueError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit()
+
+    if not picks:
+        console.print("[yellow]No net-bullish picks found for the current screen.[/yellow]")
+        return
+
+    table = Table(
+        title=f"[bold]Top Analyst Buys ({universe if not tickers else 'custom'})[/bold]",
+        border_style="bright_cyan",
+    )
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("Symbol", style="bold cyan")
+    table.add_column("Company", style="white", max_width=26)
+    table.add_column("Price", justify="right")
+    table.add_column("Target", justify="right")
+    table.add_column("Upside", justify="right")
+    table.add_column("Rating", justify="center")
+    table.add_column("#", justify="right")
+    table.add_column("Sector", style="white", max_width=18)
+
+    for i, p in enumerate(picks, 1):
+        label, color = screener.rating_label(p)
+        table.add_row(
+            str(i),
+            p["symbol"],
+            p.get("company") or "-",
+            f"${p['current']:,.2f}",
+            f"${p['target']:,.2f}",
+            f"[green]+{p['upside'] * 100:.0f}%[/green]",
+            f"[{color}]{label}[/{color}]",
+            str(p["total"]),
+            f"{p.get('sector') or '-'}",
+        )
+    console.print(table)
+
+    console.print("Mean target upside is from yfinance analyst consensus (24h cache).")
+
+    if deep:
+        with console.status("[bold magenta]Researching top picks...[/bold magenta]"):
+            narrative = screener.deep_dive(picks)
+        if narrative:
+            console.print(Panel(narrative, title="🧠 Deep-Dive: Why These Are Buys Now", border_style="bright_magenta"))
 
 
 @app.command()

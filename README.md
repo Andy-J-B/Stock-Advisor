@@ -63,6 +63,7 @@ full command line:
 | `market-update` | Macro news sentiment + anomaly detection on portfolio holdings |
 | `portfolio-news` | Per-ticker news sentiment with headline-level breakdown |
 | `research AAPL` | Deep dive on a single ticker |
+| `top-buys` | Screen S&P 500 / TSX 60 (or your own list) for high-conviction analyst buys with AI deep-dive |
 
 ### Portfolio Management
 

@@ -35,6 +35,20 @@ def _commands():
     return out
 
 
+def _show_help(name: str):
+    """Show the CLI's own help page for a command so the user sees allowed args."""
+    result = subprocess.run(
+        [sys.executable, "main.py", name, "--help"],
+        cwd=PROJECT_DIR,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+    )
+    out = result.stdout or result.stderr
+    console.print(f"[bold yellow]--- {name} --help ---[/bold yellow]")
+    console.print(out)
+
+
 def _run(argv: list[str]):
     console.print(f"\n[bold blue]▶ python main.py {' '.join(argv)}[/bold blue]\n")
     try:
@@ -93,6 +107,7 @@ def main():
                     break
                 continue
             name, _ = commands[idx]
+            _show_help(name)
             args = _ask(
                 f"Arguments for [green]{name}[/green] (empty = no args)"
             )

@@ -157,9 +157,12 @@ def get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame:
 
 
 def get_close_prices(
-    tickers: list[str], period: str = "1y"
+    tickers: list[str], period: str = "1y", min_rows: int = 1
 ) -> pd.DataFrame:
     """Fetch aligned daily close prices for multiple tickers.
+
+    Tickers with fewer than *min_rows* of history are excluded, so one
+    sparse listing doesn't collapse the shared date index.
 
     Returns a DataFrame with tickers as columns and a shared date index.
     Rows with any NaN are dropped.
@@ -169,7 +172,7 @@ def get_close_prices(
     frames = {}
     for ticker in tickers:
         df = get_price_history(ticker, period)
-        if not df.empty and "Close" in df.columns:
+        if not df.empty and "Close" in df.columns and len(df) >= min_rows:
             frames[ticker] = df["Close"]
     if not frames:
         return pd.DataFrame()

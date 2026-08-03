@@ -77,6 +77,18 @@ class TestResolveUsTicker:
     @patch("src.ticker_map.yf.Ticker")
     @patch("src.ticker_map.cache_set")
     @patch("src.ticker_map.cache_get", return_value=None)
+    def test_canadian_only_guard_beats_false_us_exchange(self, mock_get, mock_set, mock_ticker):
+        from src.ticker_map import resolve_us_ticker
+        # yfinance returns a phantom US exchange for these bases; the guard
+        # must keep them on TSX instead of resolving to the phantom listing.
+        mock_ticker.return_value.info = {"exchange": "NMS", "quoteType": "ECNQUOTE"}
+        assert resolve_us_ticker("VCE.TO") == "VCE.TO"
+        assert resolve_us_ticker("VFV.TO") == "VFV.TO"
+        mock_ticker.assert_not_called()
+
+    @patch("src.ticker_map.yf.Ticker")
+    @patch("src.ticker_map.cache_set")
+    @patch("src.ticker_map.cache_get", return_value=None)
     def test_no_exchange_passthrough(self, mock_get, mock_set, mock_ticker):
         from src.ticker_map import resolve_us_ticker
         mock_ticker.return_value.info = {}

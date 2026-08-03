@@ -31,6 +31,11 @@ _CDR_TO_US: Dict[str, str] = {
     "BRK.TO": "BRK-B",
 }
 
+# Canadian-only securities whose base ticker falsely resolves to a US
+# exchange (yfinance returns an empty ECNQUOTE/NMS quote for these).
+# They must always stay on TSX.
+_CANADIAN_ONLY = frozenset({"VCE.TO", "VFV.TO"})
+
 # Cache ticker mappings for 30 days — they rarely change.
 TTL_TICKER_MAP = 86400 * 30
 
@@ -88,6 +93,12 @@ def resolve_us_ticker(ticker: str) -> str:
         cache_set(cache_key, us)
         log.debug("ticker_map: %s → %s (static)", ticker, us)
         return us
+
+    # Step 1b: Canadian-only securities — never map to a US base ticker
+    if ticker in _CANADIAN_ONLY:
+        cache_set(cache_key, ticker)
+        log.debug("ticker_map: %s → %s (Canadian-only)", ticker, ticker)
+        return ticker
 
     # Step 2: strip suffix, try base ticker on US exchanges
     base = ticker.split(".")[0]

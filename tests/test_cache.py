@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
 
 import pytest
+import pandas as pd
 from peewee import SqliteDatabase
 
 # ---------------------------------------------------------------------------
@@ -138,6 +139,51 @@ class TestDataClientCache:
             result = get_usd_to_cad()
             mock_http.get.assert_not_called()
         assert result == 1.3650
+
+    def test_get_close_prices_filters_sparse_tickers(self):
+        """Sparse tickers (fewer than min_rows) must not collapse the shared index."""
+        from src.data_client import get_close_prices
+
+        long_dates = pd.date_range("2025-01-01", periods=100, freq="B")
+        short_dates = pd.date_range("2025-01-01", periods=3, freq="B")
+
+        def fake_history(ticker, period="1y"):
+            if ticker == "SPARSE":
+                return pd.DataFrame(
+                    {"Close": [10, 11, 12]},
+                    index=pd.DatetimeIndex(short_dates),
+                )
+            return pd.DataFrame(
+                {"Close": range(100)},
+                index=pd.DatetimeIndex(long_dates),
+            )
+
+        with patch("src.data_client.get_price_history", side_effect=fake_history):
+            result = get_close_prices(["GOOD1", "GOOD2", "SPARSE"], period="1y", min_rows=30)
+
+        assert "SPARSE" not in result.columns
+        assert list(result.columns) == ["GOOD1", "GOOD2"]
+        assert result.shape[0] == 100
+
+    def test_get_close_prices_default_no_filter(self):
+        """Without min_rows, sparse tickers are kept (backward compatible)."""
+        from src.data_client import get_close_prices
+
+        long_dates = pd.date_range("2025-01-01", periods=50, freq="B")
+        short_dates = pd.date_range("2025-01-01", periods=3, freq="B")
+
+        def fake_history(ticker, period="1y"):
+            dates = long_dates if ticker == "FULL" else short_dates
+            return pd.DataFrame(
+                {"Close": range(len(dates))},
+                index=pd.DatetimeIndex(dates),
+            )
+
+        with patch("src.data_client.get_price_history", side_effect=fake_history):
+            result = get_close_prices(["FULL", "SPARSE"], period="1y")
+
+        assert "SPARSE" in result.columns
+        assert result.shape[0] == 3
 
 
 # ---------------------------------------------------------------------------

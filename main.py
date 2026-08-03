@@ -444,8 +444,12 @@ def optimize_portfolio(
         help="Optimization objective: max-sharpe, min-volatility, efficient-risk",
     ),
     target_volatility: float = typer.Option(
-        None, "--target-volatility", "-t",
-        help="Target annual volatility (for efficient-risk objective).",
+        0.2, "--target-volatility", "-t",
+        help=(
+            "Target annualized volatility as a decimal (e.g. 0.10 = 10%, "
+            "0.20 = 20%, 0.50 = 50%). Typical target range: 0.10–0.30. "
+            "Only used with the efficient-risk objective. [default: 0.2]"
+        ),
     ),
 ):
     """Suggest optimal portfolio weights using mean-variance optimization."""
@@ -461,12 +465,39 @@ def optimize_portfolio(
         console.print("[yellow]Need at least 2 unique tickers to optimize.[/yellow]")
         return
 
-    with console.status("[bold green]Fetching price history...[/bold green]"):
-        close_df = data_client.get_close_prices(tickers, period="1y")
+    # Resolve Canadian tickers (.TO/.NE) to their US equivalents (e.g. VISA.NE → V,
+    # UBER.NE → UBER) so we optimize on full US price history.
+    ticker_us_map = ticker_map.resolve_tickers(tickers)
+    us_tickers = [ticker_us_map.get(t.upper(), t.upper()) for t in tickers]
 
-    if close_df.empty or close_df.shape[0] < 30:
+    dupes = {us for us in us_tickers if us_tickers.count(us) > 1}
+    if dupes:
+        for us in dupes:
+            originals = [t for t, u in zip(tickers, us_tickers) if u == us]
+            console.print(f"[yellow]Warning: {', '.join(originals)} all map to {us}; using a single price series.[/yellow]")
+
+    with console.status("[bold green]Fetching price history...[/bold green]"):
+        close_df = data_client.get_close_prices(us_tickers, period="1y", min_rows=30)
+
+    if close_df.empty:
         console.print("[yellow]Not enough price history (need ~30+ trading days).[/yellow]")
         return
+
+    skipped = [t for t, us in zip(tickers, us_tickers) if us not in close_df.columns]
+    if skipped:
+        console.print(f"[yellow]Skipped (insufficient history <30d): {', '.join(skipped)}[/yellow]")
+
+    if close_df.shape[1] < 2:
+        console.print("[yellow]Need at least 2 tickers with sufficient history to optimize.[/yellow]")
+        return
+
+    if close_df.shape[0] < 30:
+        console.print("[yellow]Not enough price history (need ~30+ trading days).[/yellow]")
+        return
+
+    # Map resolved US columns back to the original portfolio tickers for display.
+    us_to_orig = {u: t for t, u in zip(tickers, us_tickers)}
+    close_df = close_df.rename(columns={u: us_to_orig[u] for u in close_df.columns})
 
     try:
         result = optimizer.optimize(close_df, objective, target_volatility)

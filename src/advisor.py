@@ -18,7 +18,6 @@ from .alpha_vantage import (
     get_balance_sheet,
     get_cash_flow,
     get_technical_indicator,
-    get_daily_price as av_get_daily_price,
 )
 from . import data_client
 from .ticker_map import resolve_tickers
@@ -224,7 +223,6 @@ def evaluate_portfolio(current_portfolio: dict, user_settings: dict):
 
     # ----- basic numbers -------------------------------------------------
     total_holdings = sum(len(acc.get("holdings", {})) for acc in accounts.values())
-    total_cash = sum(acc.get("cash", 0.0) for acc in accounts.values())
 
     # ----- macro news ----------------------------------------------------
     macro_news = av_get_macro_news(limit=7)  # returns list of dicts
@@ -249,16 +247,28 @@ def evaluate_portfolio(current_portfolio: dict, user_settings: dict):
         ov = get_company_overview(us) or {}
         sector_map[t] = ov.get("Sector", "Other")
 
-    # ----- sector exposure (value‑weighted) -----------------------------
-    sector_exposure: dict[str, float] = {}
+    # ----- prices & valuation -------------------------------------------
+    # Value every holding at its *actual* traded price (CAD for .TO/.NE
+    # listings, incl. CDRs) rather than the full US underlying price —
+    # a CDR is not a full US share and trades in CAD.  US-account cash and
+    # holdings are converted to CAD via the current FX rate, matching the
+    # view-portfolio global summary.
+    fx_rate = data_client.get_usd_to_cad()
+    all_tickers = [tk for acc in accounts.values() for tk in acc.get("holdings", {})]
+    all_tickers = list(dict.fromkeys(all_tickers))  # dedupe, preserve order
+    prices = data_client.get_current_prices_batch(all_tickers) if all_tickers else {}
+
+    total_cash = 0.0
     total_portfolio_value = 0.0
-    for acc in accounts.values():
-        for t, data in acc.get("holdings", {}).items():
-            us = ticker_us_map.get(t.upper(), t)
-            price, _ = av_get_daily_price(us)
-            if price == 0.0:
+    sector_exposure: dict[str, float] = {}
+    for acc_name, acc_data in accounts.items():
+        multiplier = fx_rate if acc_name.upper() == "USD" else 1.0
+        total_cash += acc_data.get("cash", 0.0) * multiplier
+        for t, data in acc_data.get("holdings", {}).items():
+            price, _ = prices.get(t, (0.0, 0.0))
+            if price <= 0.0:
                 price, _ = data_client.get_current_price(t)
-            pos_value = price * data["shares"]
+            pos_value = price * data["shares"] * multiplier
             total_portfolio_value += pos_value
             sector = sector_map.get(t.upper(), "Other")
             sector_exposure[sector] = sector_exposure.get(sector, 0.0) + pos_value

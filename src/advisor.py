@@ -20,7 +20,7 @@ from .alpha_vantage import (
     get_technical_indicator,
 )
 from . import data_client
-from .ticker_map import resolve_tickers
+from .ticker_map import resolve_tickers, resolve_us_ticker
 
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -347,14 +347,21 @@ Provide a concise, markdown‑formatted analysis containing:
         return Markdown(ai_response)
 
 
-def generate_stock_report(ticker: str, current_portfolio: dict) -> str:
+def generate_stock_report(ticker: str, current_portfolio: dict) -> tuple[str, str]:
     """
-    Uses Alpha Vantage fundamentals (OVERVIEW, INCOME, BALANCE, CASHFLOW)
-    plus a short list of technical indicators (SMA, RSI, MACD) to give the
-    LLM more concrete numbers.
+    Gathers everything we know about *ticker* (price, fundamentals,
+    technicals, position) and returns a ``(data_md, report_md)`` tuple:
+      • ``data_md``   – a raw data snapshot shown at the top of the output
+      • ``report_md`` – the Gemini senior-analyst report
     """
     # ------------------------------------------------------------------
-    # 1️⃣ Basic portfolio context (unchanged)
+    # 1️⃣ Resolve to the US listing for Alpha Vantage (AV has no .TO/.NE)
+    #    but keep the *actual* ticker for price lookups (CDRs trade in CAD)
+    # ------------------------------------------------------------------
+    us_ticker = resolve_us_ticker(ticker)
+
+    # ------------------------------------------------------------------
+    # 1️⃣ Basic portfolio context
     # ------------------------------------------------------------------
     accounts = current_portfolio.get("accounts", {})
     position_info = "The client does not currently hold this stock."
@@ -366,43 +373,63 @@ def generate_stock_report(ticker: str, current_portfolio: dict) -> str:
             )
 
     # ------------------------------------------------------------------
+    # 2️⃣ Current price (actual traded listing)
+    # ------------------------------------------------------------------
+    current, prev_close = data_client.get_current_price(ticker)
+    if current > 0 and prev_close > 0:
+        day_change = 100 * (current - prev_close) / prev_close
+        price_md = (
+            f"- **Current Price:** ${current:,.2f} "
+            f"(prev close ${prev_close:,.2f}, {day_change:+.2f}%)"
+        )
+    elif current > 0:
+        price_md = f"- **Current Price:** ${current:,.2f}"
+    else:
+        price_md = "- **Current Price:** not available"
+
+    # ------------------------------------------------------------------
     # 2️⃣ Fundamentals from Alpha Vantage
     # ------------------------------------------------------------------
-    overview = get_company_overview(ticker) or {}
-    income = get_income_statement(ticker, period="annual")[:1]  # most recent year
-    balance = get_balance_sheet(ticker, period="annual")[:1]
-    cashflow = get_cash_flow(ticker, period="annual")[:1]
+    overview = get_company_overview(us_ticker) or {}
+    income = get_income_statement(us_ticker, period="annual")[:1]  # most recent year
+    balance = get_balance_sheet(us_ticker, period="annual")[:1]
+    cashflow = get_cash_flow(us_ticker, period="annual")[:1]
+
+    def _fmt(v) -> str:
+        return "N/A" if v is None else str(v)
 
     # Build a concise markdown bullet list – the LLM will expand it
     fundamentals_md = "\n".join(
         [
-            f"- **Sector:** {overview.get('Sector', 'N/A')}",
-            f"- **Industry:** {overview.get('Industry', 'N/A')}",
-            f"- **Market Cap:** {overview.get('MarketCapitalization', 'N/A')}",
-            f"- **PE Ratio (TTM):** {overview.get('PERatio', 'N/A')}",
-            f"- **PEG Ratio:** {overview.get('PEGRatio', 'N/A')}",
-            f"- **Dividend Yield:** {overview.get('DividendYield', 'N/A')}",
-            f"- **52‑Week High / Low:** ${overview.get('52WeekHigh', 'N/A')} / ${overview.get('52WeekLow', 'N/A')}",
-            f"- **Profit Margin:** {overview.get('ProfitMargin', 'N/A')}",
-            f"- **Return on Equity:** {overview.get('ReturnOnEquityTTM', 'N/A')}",
-            f"- **Latest Revenue:** {income[0].get('totalRevenue') if income else 'N/A'}",
-            f"- **Net Income:** {income[0].get('netIncome') if income else 'N/A'}",
-            f"- **Total Assets:** {balance[0].get('totalAssets') if balance else 'N/A'}",
-            f"- **Total Liabilities:** {balance[0].get('totalLiabilities') if balance else 'N/A'}",
-            f"- **Operating Cash Flow:** {cashflow[0].get('operatingCashFlow') if cashflow else 'N/A'}",
+            f"- **Sector:** {_fmt(overview.get('Sector'))}",
+            f"- **Industry:** {_fmt(overview.get('Industry'))}",
+            f"- **Market Cap:** {_fmt(overview.get('MarketCapitalization'))}",
+            f"- **PE Ratio (TTM):** {_fmt(overview.get('PERatio'))}",
+            f"- **PEG Ratio:** {_fmt(overview.get('PEGRatio'))}",
+            f"- **Dividend Yield:** {_fmt(overview.get('DividendYield'))}",
+            f"- **52-Week High / Low:** ${_fmt(overview.get('52WeekHigh'))} / ${_fmt(overview.get('52WeekLow'))}",
+            f"- **Profit Margin:** {_fmt(overview.get('ProfitMargin'))}",
+            f"- **Return on Equity:** {_fmt(overview.get('ReturnOnEquityTTM'))}",
+            f"- **Analyst Recommendation:** {_fmt(overview.get('Recommendation'))}",
+            f"- **Analyst Target Price:** ${_fmt(overview.get('AnalystTargetPrice'))}",
+            f"- **Latest Revenue:** {_fmt(income[0].get('totalRevenue') if income else None)}",
+            f"- **Net Income:** {_fmt(income[0].get('netIncome') if income else None)}",
+            f"- **Total Assets:** {_fmt(balance[0].get('totalAssets') if balance else None)}",
+            f"- **Total Liabilities:** {_fmt(balance[0].get('totalLiabilities') if balance else None)}",
+            f"- **Operating Cash Flow:** {_fmt(cashflow[0].get('operatingCashFlow') if cashflow else None)}",
         ]
     )
 
     # ------------------------------------------------------------------
-    # 3️⃣ Light technical snapshot (SMA‑20, RSI‑14, MACD)
+    # 3️⃣ Light technical snapshot (SMA-20, RSI-14, MACD)
     # ------------------------------------------------------------------
-    sma = get_technical_indicator(ticker, "SMA", interval="daily", time_period=20)
-    rsi = get_technical_indicator(ticker, "RSI", interval="daily", time_period=14)
+    sma = get_technical_indicator(us_ticker, "SMA", interval="daily", time_period=20)
+    rsi = get_technical_indicator(us_ticker, "RSI", interval="daily", time_period=14)
     macd = get_technical_indicator(
-        ticker, "MACD", interval="daily", fastperiod=12, slowperiod=26, signalperiod=9
+        us_ticker, "MACD", interval="daily", fastperiod=12, slowperiod=26, signalperiod=9
     )
 
-    tech_md = ""
+    tech_md = "- Technical indicator data not available."
     try:
         sma_val = list(sma["Technical Analysis: SMA"].values())[0]["SMA"]
         rsi_val = list(rsi["Technical Analysis: RSI"].values())[0]["RSI"]
@@ -410,12 +437,24 @@ def generate_stock_report(ticker: str, current_portfolio: dict) -> str:
         macd_val = macd_vals["MACD"]
         macd_signal = macd_vals["MACD_Signal"]
         tech_md = (
-            f"- **SMA‑20:** {float(sma_val):.2f}\n"
-            f"- **RSI‑14:** {float(rsi_val):.2f}\n"
+            f"- **SMA-20:** {float(sma_val):.2f}\n"
+            f"- **RSI-14:** {float(rsi_val):.2f}\n"
             f"- **MACD:** {float(macd_val):.2f} (Signal: {float(macd_signal):.2f})"
         )
     except Exception:
-        tech_md = "- Technical indicator data not available."
+        pass
+
+    # ------------------------------------------------------------------
+    # 3.5️⃣ Raw-data snapshot printed at the top (everything we know)
+    # ------------------------------------------------------------------
+    data_md = (
+        f"**TICKER:** {ticker.upper()} (US: {us_ticker})  |  "
+        f"**DATE:** {date.today().strftime('%B %d, %Y')}\n\n"
+        f"**POSITION**\n- {position_info}\n\n"
+        f"**PRICE**\n{price_md}\n\n"
+        f"**FUNDAMENTALS**\n{fundamentals_md}\n\n"
+        f"**TECHNICALS**\n{tech_md}"
+    )
 
     # ------------------------------------------------------------------
     # 4️⃣ Prompt for Gemini (the same persona as before)
@@ -427,6 +466,9 @@ Role: Senior Equity Research Analyst (Value & Growth focus).
 **DATE:** {date.today().strftime('%B %d, %Y')}
 **PORTFOLIO CONTEXT:** {position_info}
 
+**CURRENT PRICE**
+{price_md}
+
 **FUNDAMENTAL SNAPSHOT**
 {fundamentals_md}
 
@@ -436,17 +478,18 @@ Role: Senior Equity Research Analyst (Value & Growth focus).
 Please produce a markdown report covering:
 
 1️⃣ **Company Profile & Moat** – key business model, competitive advantages.  
-2️⃣ **Financial Health** – comment on profitability, balance‑sheet strength and cash‑flow.  
-3️⃣ **Valuation** – interpret the PE/PEG and suggest a fair‑value range.  
+2️⃣ **Financial Health** – comment on profitability, balance-sheet strength and cash-flow.  
+3️⃣ **Valuation** – interpret the PE/PEG and suggest a fair-value range.  
 4️⃣ **Analyst Sentiment** – use the *Recommendation* field from the overview.  
-5️⃣ **Macro‑Economic Impact** – briefly note how current rates/inflation affect the sector.  
+5️⃣ **Macro-Economic Impact** – briefly note how current rates/inflation affect the sector.  
 6️⃣ **Technical Outlook** – bullish/neutral/bearish based on SMA/RSI/MACD.  
-7️⃣ **Red‑Flags** – up to three material risks.  
+7️⃣ **Red-Flags** – up to three material risks.  
 
-**CONCLUSION** – final Verdict (Strong Buy / Buy / Hold / Sell) + concise action plan.
+**CONCLUSION** – final Verdict (Strong Buy / Buy / Hold / Sell) + concise action plan.
 
-**DISCLAIMER** – standard “not personal investment advice” clause.
+**DISCLAIMER** – standard "not personal investment advice" clause.
 """
 
     response = _gemini_generate(prompt)
-    return response if response else "AI Advisor is currently unavailable."
+    report_md = response if response else "AI Advisor is currently unavailable."
+    return data_md, report_md

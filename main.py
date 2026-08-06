@@ -828,8 +828,15 @@ def research(ticker: str):
     """Get a deep-dive analyst report and action plan for a specific stock."""
     current_portfolio = portfolio.load()
     with console.status(f"[bold cyan]Performing Ultimate Deep-Dive for {ticker.upper()}...[/bold cyan]"):
-        report_md = advisor.generate_stock_report(ticker, current_portfolio)
+        data_md, report_md = advisor.generate_stock_report(ticker, current_portfolio)
 
+    console.print(
+        Panel(
+            Markdown(data_md),
+            title=f"📊 Data: {ticker.upper()}",
+            border_style="cyan",
+        )
+    )
     console.print(
         Panel(
             Markdown(report_md),

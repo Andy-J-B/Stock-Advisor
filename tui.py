@@ -147,7 +147,7 @@ class StockDashboard(App):
         """Runs in a background thread to prevent UI freezing."""
         current_portfolio = portfolio.load()
         try:
-            report_md = advisor.generate_stock_report(ticker, current_portfolio)
+            _, report_md = advisor.generate_stock_report(ticker, current_portfolio)
         except Exception as e:
             report_md = f"❌ **Analysis Failed:** {str(e)}"
 

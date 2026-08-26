@@ -194,7 +194,11 @@ def screen(
             raise ValueError("No tickers provided.")
         symbols, names = _resolve_symbols(symbols)
     else:
-        names = fetch_universe(universe)
+        names: dict[str, str] = {}
+        for part in universe.split(","):
+            part = part.strip()
+            if part:
+                names.update(fetch_universe(part))
         symbols = list(names.keys())
         if not symbols:
             raise ValueError(f"Could not fetch universe {universe!r}. Try --tickers.")

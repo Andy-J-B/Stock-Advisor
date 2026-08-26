@@ -928,7 +928,7 @@ def rebalance():
 def top_buys(
     universe: str = typer.Option(
         "sp500", "--universe", "-u",
-        help="Universe to screen: sp500, tsx60 (or use --tickers for a custom list).",
+        help="Universe(s) to screen, comma-separated: sp500, tsx60 (or use --tickers for a custom list).",
     ),
     limit: int = typer.Option(
         10, "--limit", "-l", help="How many top picks to show (default: 10)."

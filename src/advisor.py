@@ -3,6 +3,7 @@ from __future__ import annotations
 # src/advisor.py
 import os
 import json
+import time
 import warnings
 from datetime import date
 from typing import Any, List
@@ -391,8 +392,11 @@ def generate_stock_report(ticker: str, current_portfolio: dict) -> tuple[str, st
     # 2️⃣ Fundamentals from Alpha Vantage
     # ------------------------------------------------------------------
     overview = get_company_overview(us_ticker) or {}
+    time.sleep(1.2)  # respect Alpha Vantage free-tier rate limit (5 req/min)
     income = get_income_statement(us_ticker, period="annual")[:1]  # most recent year
+    time.sleep(1.2)
     balance = get_balance_sheet(us_ticker, period="annual")[:1]
+    time.sleep(1.2)
     cashflow = get_cash_flow(us_ticker, period="annual")[:1]
 
     def _fmt(v) -> str:
@@ -416,15 +420,18 @@ def generate_stock_report(ticker: str, current_portfolio: dict) -> tuple[str, st
             f"- **Net Income:** {_fmt(income[0].get('netIncome') if income else None)}",
             f"- **Total Assets:** {_fmt(balance[0].get('totalAssets') if balance else None)}",
             f"- **Total Liabilities:** {_fmt(balance[0].get('totalLiabilities') if balance else None)}",
-            f"- **Operating Cash Flow:** {_fmt(cashflow[0].get('operatingCashFlow') if cashflow else None)}",
+            f"- **Operating Cash Flow:** {_fmt(cashflow[0].get('operatingCashflow') if cashflow else None)}",
         ]
     )
 
     # ------------------------------------------------------------------
     # 3️⃣ Light technical snapshot (SMA-20, RSI-14, MACD)
     # ------------------------------------------------------------------
+    time.sleep(1.2)
     sma = get_technical_indicator(us_ticker, "SMA", interval="daily", time_period=20)
+    time.sleep(1.2)
     rsi = get_technical_indicator(us_ticker, "RSI", interval="daily", time_period=14)
+    time.sleep(1.2)
     macd = get_technical_indicator(
         us_ticker, "MACD", interval="daily", fastperiod=12, slowperiod=26, signalperiod=9
     )

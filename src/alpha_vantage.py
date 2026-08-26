@@ -238,7 +238,11 @@ def get_income_statement(ticker: str, period: str = "annual") -> List[Dict[str, 
         data = _get(url, params)
         key = "annualReports" if period == "annual" else "quarterlyReports"
         result = data.get(key, [])
-    except Exception:
+        if "Information" in data:
+            log.warning("AV rate-limited on INCOME_STATEMENT for %s", ticker)
+            result = []
+    except Exception as exc:
+        log.debug("INCOME_STATEMENT failed for %s: %s", ticker, exc)
         result = []
 
     cache_set(cache_key, result)
@@ -260,7 +264,11 @@ def get_balance_sheet(ticker: str, period: str = "annual") -> List[Dict[str, Any
         data = _get(url, params)
         key = "annualReports" if period == "annual" else "quarterlyReports"
         result = data.get(key, [])
-    except Exception:
+        if "Information" in data:
+            log.warning("AV rate-limited on BALANCE_SHEET for %s", ticker)
+            result = []
+    except Exception as exc:
+        log.debug("BALANCE_SHEET failed for %s: %s", ticker, exc)
         result = []
 
     cache_set(cache_key, result)
@@ -282,7 +290,11 @@ def get_cash_flow(ticker: str, period: str = "annual") -> List[Dict[str, Any]]:
         data = _get(url, params)
         key = "annualReports" if period == "annual" else "quarterlyReports"
         result = data.get(key, [])
-    except Exception:
+        if "Information" in data:
+            log.warning("AV rate-limited on CASH_FLOW for %s", ticker)
+            result = []
+    except Exception as exc:
+        log.debug("CASH_FLOW failed for %s: %s", ticker, exc)
         result = []
 
     cache_set(cache_key, result)
@@ -323,7 +335,11 @@ def get_technical_indicator(
 
     try:
         result = _get(url, params)
-    except Exception:
+        if "Information" in result:
+            log.warning("AV rate-limited on %s for %s", indicator, ticker)
+            result = {}
+    except Exception as exc:
+        log.debug("Technical indicator %s failed for %s: %s", indicator, ticker, exc)
         result = {}
 
     cache_set(cache_key, result)

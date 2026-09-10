@@ -114,7 +114,7 @@ Stock-Advisor/
     ├── ml_model.py         # LightGBM classifier (walk-forward CV, auto-retrain)
     ├── anomaly.py          # Isolation Forest + GMM anomaly detection
     ├── screener.py         # Analyst-consensus stock screener (top-buys)
-    └── brief.py            # Composite conviction scoring (nightly brief)
+    └── brief.py            # Composite conviction scoring + market snapshot (nightly brief)
 ```
 
 ## Nightly Brief & History Dashboard
@@ -142,12 +142,18 @@ conviction = 0.25*sentiment + 0.20*technical + 0.30*ml_pred + 0.25*analyst  (+ a
 Raw components are stored alongside the composite so the dashboard can show *why* a score
 moved, and weightings can be backtested retroactively.
 
+On every run the brief also snapshots a **market overview** (best-effort — any
+failed source is skipped, never fails the run): close + daily % change for the
+S&P 500, NASDAQ, and TSX 60 (from yfinance), plus the top 5 macro headlines
+(Finnhub → NewsAPI fallback). This non-stock context is stored per run and
+surfaced in the webhook message and the dashboard.
+
 ### Running the brief
 
 ```bash
-python main.py brief                          # score holdings + watchlist, console only
+python main.py brief                          # score holdings + watchlist + market snapshot, console only
 python main.py brief --tickers MSFT,NVDA      # override ticker list
-python main.py brief --persist                # write to Supabase Postgres
+python main.py brief --persist                # write scores + market snapshot to Supabase Postgres
 python main.py brief --persist --notify       # + post summary to Discord/Slack webhook
 
 # manage the tickers the brief scores
@@ -166,9 +172,13 @@ python main.py brief-weights --sentiment 0.30 --ml 0.30
 2. Add these to `.env` (or GitHub Actions secrets):
    - `DATABASE_URL` — **Settings → Database → Connection string → Direct connection → URI** (replace the password placeholder)
    - `DATABASE_REST_URL` — `Settings → API → Project URL` + `/rest/v1`
-   - `SUPABASE_PUBLISHABLE_KEY` — `Settings → API → Publishable key` (`sb_publishable_...`). Use the **publishable** key (not the legacy `anon`, which is deprecated by end of 2026; not the secret key, which bypasses RLS). The RLS policies in the schema grant it read + write on these two tables.
-3. `python main.py brief --persist` upserts into `brief_runs` / `ticker_scores`
-   (one row per run_date).
+   - `SUPABASE_PUBLISHABLE_KEY` — `Settings → API → Publishable key` (`sb_publishable_...`). Use the **publishable** key (not the legacy `anon`, which is deprecated by end of 2026; not the secret key, which bypasses RLS). The RLS policies in the schema grant it read + write on these tables.
+3. `python main.py brief --persist` upserts into:
+   - `brief_runs` — one row per `run_date` (weights used + ticker list)
+   - `ticker_scores` — one row per (run, ticker) with composite + raw components
+   - `market_overview` — one row per `run_date` (indices + top news snapshot)
+   - `watchlist` — the current watchlist, synced after any change and after a `--persist`
+4. `python main.py brief --notify` posts the score summary **plus the market recap** to your webhook.
 
 ### Automated nightly runs
 
@@ -188,6 +198,7 @@ streamlit run dashboard.py
 The dashboard is a pure read-only viewer over the Postgres history tables
 (**no coupling to the local `portfolio.db`**):
 - Prev/◀/▶/next buttons + date slider to scrub through days
+- Market overview for the selected day: S&P 500 / NASDAQ / TSX 60 close + daily change, and top macro headlines
 - Color-coded conviction table with per-component breakdown and anomaly flags
 - Per-ticker history line chart (composite + all 4 components over time)
 - Expandable reasoning panel explaining each score
@@ -252,6 +263,6 @@ Fetches S&P 500 / TSX 60 constituents from Wikipedia (cached 7d). Ranks by analy
 .venv/bin/python -m pytest tests/ -v
 ```
 
-198 tests across 16 files: cache, database, portfolio, indicators, risk, optimizer, sentiment, features, ML model, anomaly detection, screener, and Canadian-to-US ticker mapping.
+228 tests across 16 files: cache, database, portfolio, indicators, risk, optimizer, sentiment, features, ML model, anomaly detection, screener, brief (scores + market overview), Canadian-to-US ticker mapping, and CLI helpers.
 
-CI: ruff lint + pytest with coverage (Python 3.12).
+CI: ruff lint + pytest with coverage (Python 3.12). `run_brief()` is headless-safe under CI/non-TTY (default risk allocation instead of the interactive setup prompt).

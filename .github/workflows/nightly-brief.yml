@@ -2,7 +2,7 @@ name: Nightly Brief
 
 on:
   schedule:
-    - cron: '30 5 * * 1-5'   # 00:30 ET / 21:30 PT — after US market close, weekdays only
+    - cron: '21 15 * * 1-5'   # 08:21 PDT (15:21 UTC) — weekdays only
   workflow_dispatch: {}        # manual trigger for testing
 
 jobs:

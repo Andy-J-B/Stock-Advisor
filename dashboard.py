@@ -15,7 +15,7 @@ import os
 
 import pandas as pd
 import streamlit as st
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
 # ---------------------------------------------------------------------------
 # Database connection
@@ -91,7 +91,7 @@ selected_date_str = selected_date.strftime("%Y-%m-%d") if hasattr(selected_date,
 # ---------------------------------------------------------------------------
 
 run_info = pd.read_sql(
-    "SELECT * FROM brief_runs WHERE run_date = :d",
+    text("SELECT * FROM brief_runs WHERE run_date = :d"),
     engine,
     params={"d": selected_date_str},
 )
@@ -109,12 +109,12 @@ if not run_info.empty:
 st.subheader(f"Conviction Scores — {selected_date_str}")
 
 day_df = pd.read_sql(
-    """SELECT ts.ticker, ts.composite, ts.sentiment, ts.technical,
+    text("""SELECT ts.ticker, ts.composite, ts.sentiment, ts.technical,
               ts.ml_pred, ts.analyst, ts.anomaly_flag, ts.reasoning
        FROM ticker_scores ts
        JOIN brief_runs br ON br.id = ts.run_id
        WHERE br.run_date = :d
-       ORDER BY ts.composite DESC""",
+       ORDER BY ts.composite DESC"""),
     engine,
     params={"d": selected_date_str},
 )
@@ -155,12 +155,12 @@ if not day_df.empty:
     selected_ticker = st.selectbox("Ticker history", ticker_options)
 
     hist_df = pd.read_sql(
-        """SELECT br.run_date, ts.composite, ts.sentiment, ts.technical,
+        text("""SELECT br.run_date, ts.composite, ts.sentiment, ts.technical,
                   ts.ml_pred, ts.analyst
            FROM ticker_scores ts
            JOIN brief_runs br ON br.id = ts.run_id
            WHERE ts.ticker = :t
-           ORDER BY br.run_date""",
+           ORDER BY br.run_date"""),
         engine,
         params={"t": selected_ticker},
     )

@@ -371,6 +371,7 @@ def run_brief(
 
 _SUPABASE_TABLE_RUNS = "brief_runs"
 _SUPABASE_TABLE_SCORES = "ticker_scores"
+_SUPABASE_TABLE_WATCHLIST = "watchlist"
 
 
 def _supabase_rest_config() -> tuple[str, str]:
@@ -389,7 +390,8 @@ def fetch_brief_universe() -> list[str]:
 
     Each `brief --persist` uploads the holdings ∪ watchlist it scored, so a
     fresh CI runner with an empty local database can score the same stocks.
-    Returns [] when Supabase REST is not configured or nothing is saved yet.
+    The live Supabase watchlist is merged in so trackers added after the last
+    persist are not missed. Returns [] when Supabase REST is not configured.
     """
     import httpx
 
@@ -401,6 +403,7 @@ def fetch_brief_universe() -> list[str]:
         "apikey": api_key,
         "Accept": "application/json",
     }
+    tickers: list[str] = []
     try:
         with httpx.Client(timeout=15) as client:
             resp = client.get(
@@ -426,11 +429,93 @@ def fetch_brief_universe() -> list[str]:
                         tickers = [r.get("ticker") for r in resp.json() if r.get("ticker")]
                 except Exception as exc:
                     log.warning("Could not fetch scores fallback universe: %s", exc)
-        tickers = [t for t in tickers if isinstance(t, str)]
-        return sorted(set(tickers))
     except Exception as exc:
         log.warning("Could not fetch brief universe from Supabase: %s", exc)
+
+    # Merge the live remote watchlist so newly-added trackers are not missed.
+    live = fetch_brief_watchlist()
+    tickers = sorted(set(tickers) | set(live))
+    return [t for t in tickers if isinstance(t, str)]
+
+
+def fetch_brief_watchlist() -> list[str]:
+    """Return the watchlist currently mirrored in Supabase, or [].
+
+    Best-effort: never raises, logs and returns [] on any failure.
+    """
+    import httpx
+
+    rest_url, api_key = _supabase_rest_config()
+    if not rest_url or not api_key:
         return []
+
+    try:
+        with httpx.Client(timeout=15) as client:
+            resp = client.get(
+                f"{rest_url}/{_SUPABASE_TABLE_WATCHLIST}?select=ticker",
+                headers={"apikey": api_key, "Accept": "application/json"},
+            )
+            resp.raise_for_status()
+        return sorted({r["ticker"] for r in resp.json() if r.get("ticker")})
+    except Exception as exc:
+        log.warning("Could not fetch Supabase watchlist: %s", exc)
+        return []
+
+
+def sync_watchlist_to_supabase(tickers: list[str] | None = None) -> bool:
+    """Mirror the local watchlist into Supabase.
+
+    Upserts every supplied ticker and deletes remote rows that no longer exist
+    locally (skipped when the local list is empty, so a fresh CI runner cannot
+    wipe the shared watchlist). Returns True on success, False on any failure.
+    """
+    import httpx
+
+    rest_url, api_key = _supabase_rest_config()
+    if not rest_url or not api_key:
+        log.warning("Supabase REST not configured — skipping watchlist sync.")
+        return False
+
+    if tickers is None:
+        tickers = get_watchlist()
+    tickers = sorted({t.upper().strip() for t in tickers if t and t.strip()})
+
+    headers = {
+        "apikey": api_key,
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates",
+    }
+    try:
+        with httpx.Client(timeout=15) as client:
+            # Upsert local tickers.
+            if tickers:
+                resp = client.post(
+                    f"{rest_url}/{_SUPABASE_TABLE_WATCHLIST}?on_conflict=ticker",
+                    json=[{"ticker": t} for t in tickers],
+                    headers=headers,
+                )
+                resp.raise_for_status()
+
+            # Delete stale remote entries (only when we have a positive list,
+            # so an empty local DB in CI cannot wipe the shared watchlist).
+            if tickers:
+                resp = client.get(
+                    f"{rest_url}/{_SUPABASE_TABLE_WATCHLIST}?select=ticker",
+                    headers={"apikey": api_key, "Accept": "application/json"},
+                )
+                resp.raise_for_status()
+                remote = {r["ticker"] for r in resp.json() if r.get("ticker")}
+                for stale in sorted(remote - set(tickers)):
+                    resp = client.delete(
+                        f"{rest_url}/{_SUPABASE_TABLE_WATCHLIST}?ticker=eq.{stale}",
+                        headers={"apikey": api_key},
+                    )
+                    resp.raise_for_status()
+        log.info("Synced %d watchlist tickers to Supabase.", len(tickers))
+        return True
+    except Exception as exc:
+        log.error("Failed to sync watchlist to Supabase: %s", exc)
+        return False
 
 
 def persist_to_supabase(run: BriefRun) -> bool:

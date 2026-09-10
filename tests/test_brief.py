@@ -208,3 +208,13 @@ def test_notify_without_env(monkeypatch):
     monkeypatch.setattr("os.getenv", lambda k, d="": "")
     run = brief.run_brief(tickers=[])
     assert brief.notify_webhook(run) is False
+
+
+def test_sync_watchlist_without_env(monkeypatch):
+    monkeypatch.setattr("os.getenv", lambda k, d="": "")
+    assert brief.sync_watchlist_to_supabase(["AAPL"]) is False
+
+
+def test_fetch_brief_watchlist_without_env(monkeypatch):
+    monkeypatch.setattr("os.getenv", lambda k, d="": "")
+    assert brief.fetch_brief_watchlist() == []

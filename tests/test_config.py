@@ -9,12 +9,14 @@ from src import config
 def fresh_db():
     if not db.is_closed():
         db.close()
+    original = db.database
     db.init(":memory:")
     db.connect()
     init_db()
     yield
     db.drop_tables([Setting])
     db.close()
+    db.init(original)
 
 
 def test_load_settings_empty():

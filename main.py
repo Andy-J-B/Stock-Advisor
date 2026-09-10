@@ -1055,12 +1055,27 @@ def watchlist(
         if not wl:
             console.print("[yellow]Watchlist is empty. Use 'watchlist add --ticker AAPL'.[/yellow]")
             return
+
         table = Table(title="Watchlist", border_style="cyan")
         table.add_column("#", justify="right", style="dim")
         table.add_column("Ticker", style="bold cyan")
         for i, t in enumerate(wl, 1):
             table.add_row(str(i), t)
         console.print(table)
+        return
+
+    # Keep the Supabase mirror in sync (best-effort; silent if unconfigured).
+    _maybe_sync_watchlist()
+
+
+def _maybe_sync_watchlist() -> None:
+    ok = brief.sync_watchlist_to_supabase()
+    if ok:
+        console.print("[dim]Watchlist synced to Supabase.[/dim]")
+    else:
+        console.print(
+            "[dim]Watchlist not synced (REST not configured or sync failed).[/dim]"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1155,6 +1170,7 @@ def brief_cmd(
             ok = brief.persist_to_supabase(run)
         if ok:
             console.print("[green]Brief persisted to Supabase.[/green]")
+            brief.sync_watchlist_to_supabase()
         else:
             console.print("[red]Failed to persist — check DATABASE_REST_URL and SUPABASE_PUBLISHABLE_KEY.[/red]")
 

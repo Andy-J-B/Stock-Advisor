@@ -31,13 +31,22 @@ create table if not exists ticker_scores (
 -- Create index so the dashboard's per-ticker history lookup is fast.
 create index if not exists idx_ticker_scores_ticker_run on ticker_scores (ticker, run_id);
 
+-- Live watchlist: mirrored from the local SQLite watchlist so the nightly
+-- CI brief can see current trackers even on a fresh runner.
+create table if not exists watchlist (
+    ticker    text primary key,
+    added_at  timestamptz not null default now()
+);
+
 -- Row-level security: the anon key (used by both the nightly `brief --persist`
 -- in CI and the read-only Streamlit dashboard) needs select + write access.
-alter table brief_runs   enable row level security;
+alter table brief_runs    enable row level security;
 alter table ticker_scores enable row level security;
+alter table watchlist     enable row level security;
 
 create policy "allow read" on brief_runs   for select using (true);
 create policy "allow read" on ticker_scores for select using (true);
+create policy "allow read" on watchlist    for select using (true);
 
 create policy "allow write" on brief_runs
     for insert with check (true);
@@ -48,3 +57,10 @@ create policy "allow write" on ticker_scores
     for insert with check (true);
 create policy "allow update" on ticker_scores
     for update using (true) with check (true);
+
+create policy "allow write" on watchlist
+    for insert with check (true);
+create policy "allow update" on watchlist
+    for update using (true) with check (true);
+create policy "allow delete" on watchlist
+    for delete using (true);

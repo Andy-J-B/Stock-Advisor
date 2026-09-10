@@ -6,30 +6,27 @@ from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
 
 import pandas as pd
-from peewee import SqliteDatabase
+import pytest
 
-# ---------------------------------------------------------------------------
-# Setup: in-memory DB before any model imports touch the real DB
-# ---------------------------------------------------------------------------
-_test_db = SqliteDatabase(":memory:")
+from src.database import (
+    init_db, db, cache_get, cache_set, CacheEntry,
+    Account, Holding, Transaction, NetWorthSnapshot, Setting, Watchlist,
+)
 
-import src.database as _db_mod
 
-_db_mod.db = _test_db
-_db_mod.CacheEntry._meta.database = _test_db
-_db_mod.Account._meta.database = _test_db
-_db_mod.Holding._meta.database = _test_db
-_db_mod.Transaction._meta.database = _test_db
-_db_mod.NetWorthSnapshot._meta.database = _test_db
-_db_mod.Setting._meta.database = _test_db
-
-_test_db.connect()
-_test_db.create_tables([
-    _db_mod.Account, _db_mod.Holding, _db_mod.Transaction,
-    _db_mod.NetWorthSnapshot, _db_mod.Setting, _db_mod.CacheEntry,
-])
-
-from src.database import cache_get, cache_set, CacheEntry
+@pytest.fixture(autouse=True)
+def memory_db():
+    """Fresh in-memory DB for each test (mirrors the other DB test modules)."""
+    if not db.is_closed():
+        db.close()
+    original = db.database
+    db.init(":memory:")
+    db.connect()
+    init_db(skip_migration=True)
+    yield
+    db.drop_tables([Account, Holding, Transaction, NetWorthSnapshot, Setting, Watchlist, CacheEntry])
+    db.close()
+    db.init(original)
 
 
 # ---------------------------------------------------------------------------

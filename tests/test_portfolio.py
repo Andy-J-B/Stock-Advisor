@@ -11,12 +11,14 @@ def fresh_db():
     """Use a fresh in-memory database for each test."""
     if not db.is_closed():
         db.close()
+    original = db.database
     db.init(":memory:")
     db.connect()
     init_db(skip_migration=True)
     yield
     db.drop_tables([Account, Holding, NetWorthSnapshot, CacheEntry])
     db.close()
+    db.init(original)
 
 
 # ---------------------------------------------------------------------------

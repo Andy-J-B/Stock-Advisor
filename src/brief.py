@@ -48,6 +48,7 @@ class BriefRun:
     generated_at: datetime
     weights_used: dict[str, float]
     scores: list[TickerScore] = field(default_factory=list)
+    tickers: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +317,14 @@ def run_brief(
     """
     if tickers is None:
         tickers = _get_all_tickers()
+        if not tickers:
+            remote = fetch_brief_universe()
+            if remote:
+                log.info(
+                    "Local universe empty; scoring %d tickers synced to Supabase.",
+                    len(remote),
+                )
+                tickers = remote
     if not tickers:
         log.warning("No tickers to score.")
         return BriefRun(
@@ -352,6 +361,7 @@ def run_brief(
         generated_at=datetime.now(),
         weights_used=weights,
         scores=scores,
+        tickers=tickers,
     )
 
 
@@ -361,6 +371,66 @@ def run_brief(
 
 _SUPABASE_TABLE_RUNS = "brief_runs"
 _SUPABASE_TABLE_SCORES = "ticker_scores"
+
+
+def _supabase_rest_config() -> tuple[str, str]:
+    """Return (rest_url, api_key) used for Supabase REST calls, or ('', '')."""
+    import os
+
+    rest_url = os.getenv("DATABASE_REST_URL", "")
+    api_key = os.getenv(
+        "SUPABASE_PUBLISHABLE_KEY", os.getenv("SUPABASE_ANON_KEY", "")
+    )
+    return rest_url, api_key
+
+
+def fetch_brief_universe() -> list[str]:
+    """Return the ticker universe saved by the most recent persisted run.
+
+    Each `brief --persist` uploads the holdings ∪ watchlist it scored, so a
+    fresh CI runner with an empty local database can score the same stocks.
+    Returns [] when Supabase REST is not configured or nothing is saved yet.
+    """
+    import httpx
+
+    rest_url, api_key = _supabase_rest_config()
+    if not rest_url or not api_key:
+        return []
+
+    headers = {
+        "apikey": api_key,
+        "Accept": "application/json",
+    }
+    try:
+        with httpx.Client(timeout=15) as client:
+            resp = client.get(
+                f"{rest_url}/{_SUPABASE_TABLE_RUNS}"
+                "?select=id,tickers&order=run_date.desc&limit=1",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            rows = resp.json()
+        if rows:
+            tickers = rows[0].get("tickers") or []
+            if not tickers and rows[0].get("id") is not None:
+                # Legacy rows (pre-tickers column): fall back to the tickers
+                # that were actually scored for the most recent run.
+                try:
+                    with httpx.Client(timeout=15) as client:
+                        resp = client.get(
+                            f"{rest_url}/{_SUPABASE_TABLE_SCORES}"
+                            f"?select=ticker&run_id=eq.{rows[0]['id']}",
+                            headers=headers,
+                        )
+                        resp.raise_for_status()
+                        tickers = [r.get("ticker") for r in resp.json() if r.get("ticker")]
+                except Exception as exc:
+                    log.warning("Could not fetch scores fallback universe: %s", exc)
+        tickers = [t for t in tickers if isinstance(t, str)]
+        return sorted(set(tickers))
+    except Exception as exc:
+        log.warning("Could not fetch brief universe from Supabase: %s", exc)
+        return []
 
 
 def persist_to_supabase(run: BriefRun) -> bool:
@@ -380,14 +450,10 @@ def persist_to_supabase(run: BriefRun) -> bool:
     # Requires DATABASE_REST_URL (e.g. https://<ref>.supabase.co/rest/v1)
     # and a project API key.  Prefer the new publishable key
     # (sb_publishable_...), falling back to the legacy anon key.
-    rest_url = os.getenv("DATABASE_REST_URL", "")
+    rest_url, api_key = _supabase_rest_config()
     if not rest_url:
         log.warning("DATABASE_REST_URL not set — cannot persist via REST.")
         return False
-
-    api_key = os.getenv(
-        "SUPABASE_PUBLISHABLE_KEY", os.getenv("SUPABASE_ANON_KEY", "")
-    )
     if not api_key:
         log.warning("Supabase API key not set — cannot persist via REST.")
         return False
@@ -405,6 +471,7 @@ def persist_to_supabase(run: BriefRun) -> bool:
         "run_date": run.run_date.isoformat(),
         "generated_at": run.generated_at.isoformat(),
         "weights_used": run.weights_used,
+        "tickers": run.tickers or [],
     }
 
     try:

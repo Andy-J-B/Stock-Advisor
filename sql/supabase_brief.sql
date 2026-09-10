@@ -6,8 +6,13 @@ create table if not exists brief_runs (
     id            bigserial primary key,
     run_date      date not null unique,
     generated_at  timestamptz not null default now(),
-    weights_used  jsonb not null
+    weights_used  jsonb not null,
+    tickers       jsonb
 );
+
+-- Schema evolution: make sure existing brief_runs tables get the tickers
+-- column (the nightly CI brief reads the last run's universe from here).
+alter table brief_runs add column if not exists tickers jsonb;
 
 create table if not exists ticker_scores (
     id             bigserial primary key,

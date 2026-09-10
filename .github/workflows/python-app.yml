@@ -29,9 +29,6 @@ jobs:
       - name: Lint with Ruff
         run: ruff check .
 
-      - name: Download NLTK Data
-        run: python -c "import nltk; nltk.download('vader_lexicon')"
-
       - name: Run Tests with Coverage
         run: |
           mkdir -p data
@@ -41,5 +38,4 @@ jobs:
         if: github.event_name == 'push'
         uses: codecov/codecov-action@v7
         with:
-          file: ./coverage.xml
           fail_ci_if_error: false

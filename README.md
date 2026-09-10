@@ -30,10 +30,10 @@ Optional interactive menu:
 | `FINNHUB_API_KEY`      | Macro news                                                                                              |
 | `NEWSAPI_API_KEY`      | Macro news fallback                                                                                     |
 | `FMP_API_KEY`          | Advanced fundamentals (key-metrics-ttm)                                                                                |
-| `DATABASE_URL`         | Postgres connection string (Supabase) for `brief --persist`                                                            |
-| `DATABASE_REST_URL`    | Supabase PostgREST base URL (e.g. `https://<ref>.supabase.co/rest/v1`)                                                 |
-| `SUPABASE_ANON_KEY`    | Supabase anon key for PostgREST inserts                                                                                 |
-| `NOTIFY_WEBHOOK_URL`   | Discord/Slack/Telegram webhook for `brief --notify` and nightly-failure alerts                                          |
+| `DATABASE_URL`         | Postgres connection string (Supabase) for `brief --persist` (direct connection URI) |
+| `DATABASE_REST_URL`    | Supabase PostgREST base URL (e.g. `https://<ref>.supabase.co/rest/v1`)              |
+| `SUPABASE_PUBLISHABLE_KEY` | Supabase **publishable** key (`sb_publishable_...`) for PostgREST inserts       |
+| `NOTIFY_WEBHOOK_URL`   | Discord/Slack/Telegram webhook for `brief --notify` and nightly-failure alerts      |
 
 Without `GEMINI_API_KEY`, commands fall back to locally-computed analysis.
 
@@ -163,9 +163,9 @@ python main.py brief-weights --sentiment 0.30 --ml 0.30
 
 1. Create a Supabase project, open the SQL editor, run `sql/supabase_brief.sql`.
 2. Add these to `.env` (or GitHub Actions secrets):
-   - `DATABASE_URL` — `postgresql://postgres:<pw>@db.<ref>.supabase.co:5432/postgres`
-   - `DATABASE_REST_URL` — `https://<ref>.supabase.co/rest/v1`
-   - `SUPABASE_ANON_KEY` — project anon key
+   - `DATABASE_URL` — **Settings → Database → Connection string → Direct connection → URI** (replace the password placeholder)
+   - `DATABASE_REST_URL` — `Settings → API → Project URL` + `/rest/v1`
+   - `SUPABASE_PUBLISHABLE_KEY` — `Settings → API → Publishable key` (`sb_publishable_...`). Use the **publishable** key (not the legacy `anon`, which is deprecated by end of 2026; not the secret key, which bypasses RLS). The RLS policies in the schema grant it read + write on these two tables.
 3. `python main.py brief --persist` upserts into `brief_runs` / `ticker_scores`
    (one row per run_date).
 
@@ -173,7 +173,7 @@ python main.py brief-weights --sentiment 0.30 --ml 0.30
 
 `.github/workflows/nightly-brief.yml` runs `brief --persist --notify` on a cron
 (weekdays 05:30 UTC, after US close) and posts a failure alert to your webhook.
-Add the API keys + `DATABASE_URL`/`DATABASE_REST_URL`/`SUPABASE_ANON_KEY`/
+Add the API keys + `DATABASE_URL`/`DATABASE_REST_URL`/`SUPABASE_PUBLISHABLE_KEY`/
 `NOTIFY_WEBHOOK_URL` as repo Actions secrets.
 
 ### History dashboard (Streamlit)

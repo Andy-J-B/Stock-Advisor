@@ -378,15 +378,25 @@ def persist_to_supabase(run: BriefRun) -> bool:
 
     # Use Supabase REST API (PostgREST) to insert rows with upsert semantics.
     # Requires DATABASE_REST_URL (e.g. https://<ref>.supabase.co/rest/v1)
-    # and SUPABASE_ANON_KEY for authentication.
+    # and a project API key.  Prefer the new publishable key
+    # (sb_publishable_...), falling back to the legacy anon key.
     rest_url = os.getenv("DATABASE_REST_URL", "")
     if not rest_url:
         log.warning("DATABASE_REST_URL not set — cannot persist via REST.")
         return False
 
+    api_key = os.getenv(
+        "SUPABASE_PUBLISHABLE_KEY", os.getenv("SUPABASE_ANON_KEY", "")
+    )
+    if not api_key:
+        log.warning("Supabase API key not set — cannot persist via REST.")
+        return False
+
+    # NOTE: send the key on the `apikey` header ONLY.  New-style publishable
+    # keys (sb_publishable_...) are not JWTs and are rejected if also passed
+    # on the `Authorization: Bearer` header.
     headers = {
-        "apikey": os.getenv("SUPABASE_ANON_KEY", ""),
-        "Authorization": f"Bearer {os.getenv('SUPABASE_ANON_KEY', '')}",
+        "apikey": api_key,
         "Content-Type": "application/json",
         "Prefer": "resolution=merge-duplicates",
     }

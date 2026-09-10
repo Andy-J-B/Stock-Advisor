@@ -1148,7 +1148,7 @@ def brief_cmd(
         if ok:
             console.print("[green]Brief persisted to Supabase.[/green]")
         else:
-            console.print("[red]Failed to persist — check DATABASE_REST_URL and SUPABASE_ANON_KEY.[/red]")
+            console.print("[red]Failed to persist — check DATABASE_REST_URL and SUPABASE_PUBLISHABLE_KEY.[/red]")
 
     # Notify
     if notify:

@@ -1,0 +1,44 @@
+name: Nightly Brief
+
+on:
+  schedule:
+    - cron: '30 5 * * 1-5'   # 00:30 ET / 21:30 PT — after US market close, weekdays only
+  workflow_dispatch: {}        # manual trigger for testing
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run nightly brief
+        run: python main.py brief --persist --notify
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}
+          DATABASE_REST_URL: ${{ secrets.SUPABASE_REST_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -d '{"content":"Nightly brief failed — check Actions log"}' \
+            "$NOTIFY_WEBHOOK_URL" || true
+        env:
+          NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}

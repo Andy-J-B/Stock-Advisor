@@ -62,6 +62,11 @@ class Setting(BaseModel):
     value = TextField()
 
 
+class Watchlist(BaseModel):
+    ticker = CharField(unique=True, max_length=20)
+    added_at = DateTimeField(default=datetime.now)
+
+
 class CacheEntry(BaseModel):
     key = CharField(unique=True, max_length=256)
     value = TextField()
@@ -71,7 +76,7 @@ class CacheEntry(BaseModel):
 def init_db(skip_migration: bool = False):
     if db.is_closed():
         db.connect()
-    db.create_tables([Account, Holding, Transaction, NetWorthSnapshot, Setting, CacheEntry], safe=True)
+    db.create_tables([Account, Holding, Transaction, NetWorthSnapshot, Setting, Watchlist, CacheEntry], safe=True)
     if not skip_migration:
         _migrate_from_json()
 
@@ -129,6 +134,35 @@ def _migrate_from_json():
                 Setting.get_or_create(key=key, defaults={"value": json.dumps(val)})
             else:
                 Setting.get_or_create(key=key, defaults={"value": str(val)})
+
+
+# ---------------------------------------------------------------------------
+# Cache helpers – generic key/value cache backed by SQLite
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Watchlist helpers
+# ---------------------------------------------------------------------------
+
+def get_watchlist() -> list[str]:
+    """Return the list of tickers on the watchlist."""
+    return [w.ticker for w in Watchlist.select().order_by(Watchlist.added_at)]
+
+
+def add_to_watchlist(ticker: str) -> bool:
+    """Add a ticker to the watchlist. Returns True if added, False if already present."""
+    _, created = Watchlist.get_or_create(ticker=ticker.upper().strip())
+    return created
+
+
+def remove_from_watchlist(ticker: str) -> bool:
+    """Remove a ticker from the watchlist. Returns True if removed."""
+    try:
+        w = Watchlist.get(Watchlist.ticker == ticker.upper().strip())
+        w.delete_instance()
+        return True
+    except Watchlist.DoesNotExist:
+        return False
 
 
 # ---------------------------------------------------------------------------

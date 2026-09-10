@@ -9,7 +9,10 @@ from dotenv import load_dotenv
 from rich.markdown import Markdown
 from src import setup, portfolio, advisor, config, data_client, __version__
 from src import risk, indicators, optimizer, features, ml_model, anomaly, ticker_map
-from src import screener
+from src import screener, brief
+from src.database import (
+    get_watchlist, add_to_watchlist, remove_from_watchlist, init_db,
+)
 
 load_dotenv()
 
@@ -1005,6 +1008,197 @@ def tui():
     """Launch the Textual Terminal UI dashboard."""
     from tui import StockDashboard
     StockDashboard().run()
+
+
+# ---------------------------------------------------------------------------
+# Commands – Watchlist
+# ---------------------------------------------------------------------------
+
+@app.command()
+def watchlist(
+    action: str = typer.Argument("show", help="show, add, or remove"),
+    ticker: str = typer.Option(None, "--ticker", "-t", help="Ticker to add/remove"),
+):
+    """Manage your watchlist (tickers you want to track but don't own)."""
+    if action == "add":
+        if not ticker:
+            console.print("[red]Provide --ticker to add.[/red]")
+            raise typer.Exit(code=1)
+        added = add_to_watchlist(ticker)
+        if added:
+            console.print(f"[green]Added {ticker.upper()} to watchlist.[/green]")
+        else:
+            console.print(f"[yellow]{ticker.upper()} is already on the watchlist.[/yellow]")
+
+    elif action == "remove":
+        if not ticker:
+            console.print("[red]Provide --ticker to remove.[/red]")
+            raise typer.Exit(code=1)
+        removed = remove_from_watchlist(ticker)
+        if removed:
+            console.print(f"[green]Removed {ticker.upper()} from watchlist.[/green]")
+        else:
+            console.print(f"[yellow]{ticker.upper()} is not on the watchlist.[/yellow]")
+
+    else:
+        # show
+        init_db()
+        wl = get_watchlist()
+        if not wl:
+            console.print("[yellow]Watchlist is empty. Use 'watchlist add --ticker AAPL'.[/yellow]")
+            return
+        table = Table(title="Watchlist", border_style="cyan")
+        table.add_column("#", justify="right", style="dim")
+        table.add_column("Ticker", style="bold cyan")
+        for i, t in enumerate(wl, 1):
+            table.add_row(str(i), t)
+        console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# Commands – Brief
+# ---------------------------------------------------------------------------
+
+@app.command("brief")
+def brief_cmd(
+    tickers: str = typer.Option(
+        None, "--tickers", "-t",
+        help="Comma-separated tickers to score (default: holdings + watchlist).",
+    ),
+    persist: bool = typer.Option(
+        False, "--persist", "-p",
+        help="Persist results to Supabase Postgres (requires DATABASE_URL).",
+    ),
+    notify: bool = typer.Option(
+        False, "--notify", "-n",
+        help="Post summary to webhook (requires NOTIFY_WEBHOOK_URL).",
+    ),
+    workers: int = typer.Option(
+        5, "--workers", "-w",
+        help="Parallel scoring threads.",
+    ),
+):
+    """Score every holding/watchlist ticker with a conviction score [-100, +100]."""
+    tickers_list = None
+    if tickers:
+        tickers_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+
+    with console.status("[bold cyan]Running nightly brief...[/bold cyan]"):
+        run = brief.run_brief(tickers=tickers_list, workers=workers)
+
+    if not run.scores:
+        console.print("[yellow]No tickers to score.[/yellow]")
+        return
+
+    # Build results table
+    table = Table(
+        title=f"[bold]Brief — {run.run_date.isoformat()}[/bold]",
+        border_style="bright_blue",
+    )
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("Ticker", style="bold cyan")
+    table.add_column("Composite", justify="right", style="bold")
+    table.add_column("Sentiment", justify="right")
+    table.add_column("Technical", justify="right")
+    table.add_column("ML", justify="right")
+    table.add_column("Analyst", justify="right")
+    table.add_column("Anomaly", justify="center")
+
+    for i, s in enumerate(run.scores, 1):
+        # Color composite by sign
+        if s.composite >= 25:
+            comp_style = "bold green"
+        elif s.composite <= -25:
+            comp_style = "bold red"
+        else:
+            comp_style = "bold yellow"
+
+        anomaly_cell = "[red]YES[/red]" if s.anomaly_flag else "[dim]no[/dim]"
+
+        table.add_row(
+            str(i),
+            s.ticker,
+            f"[{comp_style}]{s.composite:+.1f}[/{comp_style}]",
+            f"{s.sentiment:+.1f}",
+            f"{s.technical:+.1f}",
+            f"{s.ml_pred:+.1f}",
+            f"{s.analyst:+.1f}",
+            anomaly_cell,
+        )
+
+    console.print(table)
+
+    # Show reasoning for top and bottom
+    top = run.scores[0]
+    bottom = run.scores[-1]
+    if len(run.scores) > 1:
+        console.print(
+            Panel(
+                f"[green]{top.ticker}[/green] ({top.composite:+.1f}): {top.reasoning}\n\n"
+                f"[red]{bottom.ticker}[/red] ({bottom.composite:+.1f}): {bottom.reasoning}",
+                title="Top & Bottom Scores",
+                border_style="bright_blue",
+            )
+        )
+
+    # Persist
+    if persist:
+        with console.status("[bold green]Persisting to Supabase...[/bold green]"):
+            ok = brief.persist_to_supabase(run)
+        if ok:
+            console.print("[green]Brief persisted to Supabase.[/green]")
+        else:
+            console.print("[red]Failed to persist — check DATABASE_REST_URL and SUPABASE_ANON_KEY.[/red]")
+
+    # Notify
+    if notify:
+        ok = brief.notify_webhook(run)
+        if ok:
+            console.print("[green]Webhook notification sent.[/green]")
+        else:
+            console.print("[yellow]Webhook notification failed or NOTIFY_WEBHOOK_URL not set.[/yellow]")
+
+
+# ---------------------------------------------------------------------------
+# Commands – Brief Weights
+# ---------------------------------------------------------------------------
+
+@app.command()
+def brief_weights(
+    sentiment: float = typer.Option(None, "--sentiment", "-s"),
+    technical: float = typer.Option(None, "--technical", "-t"),
+    ml_pred: float = typer.Option(None, "--ml", "-m"),
+    analyst: float = typer.Option(None, "--analyst", "-a"),
+):
+    """View or update conviction scoring weights."""
+    current = config.load_brief_weights()
+
+    if any(x is not None for x in [sentiment, technical, ml_pred, analyst]):
+        new = dict(current)
+        if sentiment is not None:
+            new["sentiment"] = sentiment
+        if technical is not None:
+            new["technical"] = technical
+        if ml_pred is not None:
+            new["ml_pred"] = ml_pred
+        if analyst is not None:
+            new["analyst"] = analyst
+
+        total = sum(new.values())
+        if abs(total - 1.0) > 0.01:
+            console.print(f"[red]Weights must sum to 1.0 (got {total:.3f}).[/red]")
+            raise typer.Exit(code=1)
+
+        config.update_brief_weights(new)
+        console.print("[green]Brief weights updated.[/green]")
+        current = new
+
+    table = Table(title="Conviction Scoring Weights", border_style="cyan")
+    table.add_column("Component", style="cyan")
+    table.add_column("Weight", justify="right", style="green")
+    for k, v in current.items():
+        table.add_row(k, f"{v:.2f}")
+    console.print(table)
 
 
 if __name__ == "__main__":

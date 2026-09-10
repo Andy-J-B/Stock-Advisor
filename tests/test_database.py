@@ -1,7 +1,10 @@
 """Tests for the database module."""
 
 import pytest
-from src.database import init_db, db, Account, Holding, NetWorthSnapshot, Setting
+from src.database import (
+    init_db, db, Account, Holding, NetWorthSnapshot, Setting, Watchlist,
+    get_watchlist, add_to_watchlist, remove_from_watchlist,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -14,7 +17,7 @@ def memory_db():
     db.connect()
     init_db(skip_migration=True)
     yield
-    db.drop_tables([Account, Holding, NetWorthSnapshot, Setting])
+    db.drop_tables([Account, Holding, NetWorthSnapshot, Setting, Watchlist])
     db.close()
     db.init(original)
 
@@ -24,6 +27,7 @@ def test_tables_created():
     assert Holding.table_exists()
     assert NetWorthSnapshot.table_exists()
     assert Setting.table_exists()
+    assert Watchlist.table_exists()
 
 
 def test_init_db_idempotent():
@@ -102,4 +106,34 @@ def test_delete_account_leaves_orphan_holdings():
     Holding.create(account=acc, ticker="LEFT_BEHIND", shares=1, avg_price=10.0)
     acc.delete_instance()
     assert Holding.select().where(Holding.ticker == "LEFT_BEHIND").count() == 1
+
+
+# ---------------------------------------------------------------------------
+# Watchlist
+# ---------------------------------------------------------------------------
+
+def test_watchlist_add():
+    assert add_to_watchlist("AAPL") is True
+    assert get_watchlist() == ["AAPL"]
+
+
+def test_watchlist_add_uppercases():
+    add_to_watchlist("msft")
+    assert get_watchlist() == ["MSFT"]
+
+
+def test_watchlist_add_duplicate():
+    add_to_watchlist("AAPL")
+    assert add_to_watchlist("aapl") is False
+    assert len(get_watchlist()) == 1
+
+
+def test_watchlist_remove():
+    add_to_watchlist("NVDA")
+    assert remove_from_watchlist("nvda") is True
+    assert get_watchlist() == []
+
+
+def test_watchlist_remove_missing():
+    assert remove_from_watchlist("TSLA") is False
 

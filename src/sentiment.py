@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
 from typing import Any
 
 from .database import cache_get, cache_set
@@ -139,13 +140,21 @@ def _cache_key(text: str) -> str:
 # ------------------------------------------------------------------
 
 _engine: FinBertSentiment | None = None
+_engine_lock = threading.Lock()
 
 
 def get_sentiment_engine() -> FinBertSentiment:
-    """Return the singleton FinBertSentiment, loading the model on first call."""
+    """Return the singleton FinBertSentiment, loading the model on first call.
+
+    Thread-safe: the model is loaded exactly once under a lock so parallel
+    scorers never race on the deferred transformers import or model load.
+    """
     global _engine
-    if _engine is None:
-        log.info("Loading FinBERT model (first call) ...")
-        _engine = FinBertSentiment()
-        log.info("FinBERT model loaded.")
+    if _engine is not None:
+        return _engine
+    with _engine_lock:
+        if _engine is None:
+            log.info("Loading FinBERT model (first call) ...")
+            _engine = FinBertSentiment()
+            log.info("FinBERT model loaded.")
     return _engine

@@ -152,6 +152,7 @@ python main.py brief --persist --notify       # + post summary to Discord/Slack 
 
 # manage the tickers the brief scores
 python main.py watchlist add --ticker NVDA
+python main.py watchlist add --ticker MSFT,MU
 python main.py watchlist remove --ticker NVDA
 python main.py watchlist show
 

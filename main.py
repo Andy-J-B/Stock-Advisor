@@ -1017,28 +1017,36 @@ def tui():
 @app.command()
 def watchlist(
     action: str = typer.Argument("show", help="show, add, or remove"),
-    ticker: str = typer.Option(None, "--ticker", "-t", help="Ticker to add/remove"),
+    ticker: str = typer.Option(None, "--ticker", "-t", help="Ticker(s) to add/remove, comma-separated"),
 ):
     """Manage your watchlist (tickers you want to track but don't own)."""
     if action == "add":
         if not ticker:
             console.print("[red]Provide --ticker to add.[/red]")
             raise typer.Exit(code=1)
-        added = add_to_watchlist(ticker)
-        if added:
-            console.print(f"[green]Added {ticker.upper()} to watchlist.[/green]")
-        else:
-            console.print(f"[yellow]{ticker.upper()} is already on the watchlist.[/yellow]")
+        for t in ticker.replace(" ", ",").split(","):
+            t = t.strip()
+            if not t:
+                continue
+            added = add_to_watchlist(t)
+            if added:
+                console.print(f"[green]Added {t.upper()} to watchlist.[/green]")
+            else:
+                console.print(f"[yellow]{t.upper()} is already on the watchlist.[/yellow]")
 
     elif action == "remove":
         if not ticker:
             console.print("[red]Provide --ticker to remove.[/red]")
             raise typer.Exit(code=1)
-        removed = remove_from_watchlist(ticker)
-        if removed:
-            console.print(f"[green]Removed {ticker.upper()} from watchlist.[/green]")
-        else:
-            console.print(f"[yellow]{ticker.upper()} is not on the watchlist.[/yellow]")
+        for t in ticker.replace(" ", ",").split(","):
+            t = t.strip()
+            if not t:
+                continue
+            removed = remove_from_watchlist(t)
+            if removed:
+                console.print(f"[green]Removed {t.upper()} from watchlist.[/green]")
+            else:
+                console.print(f"[yellow]{t.upper()} is not on the watchlist.[/yellow]")
 
     else:
         # show

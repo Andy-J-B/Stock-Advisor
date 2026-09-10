@@ -411,7 +411,7 @@ def persist_to_supabase(run: BriefRun) -> bool:
         with httpx.Client(timeout=30) as client:
             # Upsert run, return the row so we get the run_id for the scores.
             resp = client.post(
-                f"{rest_url}/{_SUPABASE_TABLE_RUNS}",
+                f"{rest_url}/{_SUPABASE_TABLE_RUNS}?on_conflict=run_date",
                 json=run_payload,
                 headers={
                     **headers,
@@ -444,7 +444,7 @@ def persist_to_supabase(run: BriefRun) -> bool:
             for i in range(0, len(score_payloads), 50):
                 batch = score_payloads[i : i + 50]
                 resp = client.post(
-                    f"{rest_url}/{_SUPABASE_TABLE_SCORES}",
+                    f"{rest_url}/{_SUPABASE_TABLE_SCORES}?on_conflict=run_id,ticker",
                     json=batch,
                     headers=headers,
                 )

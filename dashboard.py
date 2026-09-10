@@ -11,11 +11,20 @@ or as an environment variable.
 
 from __future__ import annotations
 
+import ast
+import json
 import os
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
+
+_WEIGHT_LABELS = {
+    "sentiment": "Sentiment (news tone)",
+    "technical": "Technical (price action)",
+    "ml_pred": "ML (5-day forecast)",
+    "analyst": "Analyst (street consensus)",
+}
 
 # ---------------------------------------------------------------------------
 # Database connection
@@ -97,10 +106,42 @@ run_info = pd.read_sql(
 )
 
 if not run_info.empty:
-    st.caption(
-        f"Generated: {run_info.iloc[0]['generated_at']}  |  "
-        f"Weights: {run_info.iloc[0]['weights_used']}"
-    )
+    generated = str(run_info.iloc[0]['generated_at']).replace("+00:00", " UTC")
+    weights = run_info.iloc[0]['weights_used']
+    try:
+        weights = ast.literal_eval(weights) if isinstance(weights, str) else dict(weights)
+    except (ValueError, SyntaxError):
+        try:
+            weights = json.loads(weights)
+        except (TypeError, json.JSONDecodeError):
+            weights = {}
+    if weights:
+        weight_str = "  ·  ".join(
+            f"{_WEIGHT_LABELS.get(k, k)} {int(round(v * 100))}%"
+            for k, v in weights.items()
+        )
+        st.caption(f"Run generated {generated}  |  Weights: {weight_str}")
+    else:
+        st.caption(f"Run generated {generated}  |  Weights: {run_info.iloc[0]['weights_used']}")
+
+    with st.expander("How to read these numbers"):
+        st.markdown(
+            """
+Every factor scores the stock on a **-100 to +100** scale, and the **composite** is their
+weighted average (then **-25 if an anomaly is flagged**). Weights always sum to 100%.
+
+| Column | What it measures | Meaning |
+|---|---|---|
+| **Composite** | Blend of all four factors | **≥ +25 bullish** (strong buy-lean), **-25 to +25 neutral** (hold/watch), **≤ -25 bearish** (reduce/avoid) |
+| **Sentiment** | News tone of the latest headlines (AI) | + = positive coverage, - = negative coverage |
+| **Technical** | Momentum & trend across indicators | + = uptrend/healthy, - = downtrend/weak |
+| **ML** | Forecasted probability price rises in ~5 days | +0..100 = chance price is up |
+| **Analyst** | Street buy vs hold vs sell consensus | + = mostly buy, - = mostly sell |
+| **Anomaly** | Unusual price/volume vs its history | checks = flagged, already subtracted 25 from composite |
+
+Color coding: 🟢 green composite ≥ +25 · 🟡 yellow = neutral · 🔴 red ≤ -25.
+"""
+        )
 
 # ---------------------------------------------------------------------------
 # Day view: conviction scores table
@@ -129,18 +170,41 @@ def _color_composite(val):
         return "color: #f39c12"
 
 
-styled = day_df.style.applymap(_color_composite, subset=["composite"])
+styled = day_df.style.map(_color_composite, subset=["composite"])
 st.dataframe(
     styled,
     use_container_width=True,
     hide_index=True,
     column_config={
-        "composite": st.column_config.NumberColumn("Composite", format="%+.1f"),
-        "sentiment": st.column_config.NumberColumn("Sentiment", format="%+.1f"),
-        "technical": st.column_config.NumberColumn("Technical", format="%+.1f"),
-        "ml_pred": st.column_config.NumberColumn("ML", format="%+.1f"),
-        "analyst": st.column_config.NumberColumn("Analyst", format="%+.1f"),
-        "anomaly_flag": st.column_config.CheckboxColumn("Anomaly"),
+        "composite": st.column_config.NumberColumn(
+            "Composite",
+            format="%+.1f",
+            help="Weighted average of the four factors (minus 25 if anomaly). ≥ +25 bullish, -25 to +25 neutral, ≤ -25 bearish.",
+        ),
+        "sentiment": st.column_config.NumberColumn(
+            "Sentiment",
+            format="%+.1f",
+            help="News tone from -100 (very negative coverage) to +100 (very positive).",
+        ),
+        "technical": st.column_config.NumberColumn(
+            "Technical",
+            format="%+.1f",
+            help="Price momentum & trend from -100 (downtrend) to +100 (uptrend).",
+        ),
+        "ml_pred": st.column_config.NumberColumn(
+            "ML",
+            format="%+.1f",
+            help="Forecast probability (0-100) the price is higher in ~5 days.",
+        ),
+        "analyst": st.column_config.NumberColumn(
+            "Analyst",
+            format="%+.1f",
+            help="Street consensus from -100 (mostly sell) to +100 (mostly buy).",
+        ),
+        "anomaly_flag": st.column_config.CheckboxColumn(
+            "Anomaly",
+            help="Unusual price/volume vs its history. If flagged, 25 points were already subtracted from composite.",
+        ),
     },
 )
 

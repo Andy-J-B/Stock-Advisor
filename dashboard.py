@@ -150,6 +150,58 @@ Color coding: 🟢 green composite ≥ +25 · 🟡 yellow = neutral · 🔴 red 
         )
 
 # ---------------------------------------------------------------------------
+# Market overview: index moves + top news for the selected date
+# ---------------------------------------------------------------------------
+
+try:
+    market_df = pd.read_sql(
+        text("SELECT indices, news FROM market_overview WHERE run_date = :d"),
+        engine,
+        params={"d": selected_date_str},
+    )
+except Exception:
+    market_df = pd.DataFrame()
+
+if not market_df.empty:
+    st.divider()
+    st.subheader(f"Market — {selected_date_str}")
+    indices = market_df.iloc[0]["indices"] or {}
+    news = market_df.iloc[0]["news"] or []
+    if isinstance(indices, str):
+        try:
+            indices = json.loads(indices)
+        except (TypeError, json.JSONDecodeError):
+            indices = {}
+    if isinstance(news, str):
+        try:
+            news = json.loads(news)
+        except (TypeError, json.JSONDecodeError):
+            news = []
+
+    index_items = [(n, indices[n]) for n in ("S&P 500", "NASDAQ", "TSX 60") if n in indices]
+    if index_items:
+        cols = st.columns(len(index_items))
+        for col, (name, d) in zip(cols, index_items):
+            col.metric(
+                name,
+                f"{d.get('close', 0.0):,.2f}",
+                delta=f"{d.get('chg_pct', 0.0):+.2f}%",
+            )
+
+    if news:
+        with st.expander(f"Top market news ({len(news)})"):
+            for n in news[:7]:
+                title = (n.get("title") or "").strip()
+                pub = n.get("publisher") or ""
+                link = n.get("link") or ""
+                if not title:
+                    continue
+                if link:
+                    st.markdown(f"**{title}** — {pub}  \n{link}")
+                else:
+                    st.markdown(f"**{title}** — {pub}")
+
+# ---------------------------------------------------------------------------
 # Day view: conviction scores table
 # ---------------------------------------------------------------------------
 
@@ -268,3 +320,7 @@ if not day_df.empty:
     bullish = (day_df["composite"] >= 25).sum()
     bearish = (day_df["composite"] <= -25).sum()
     col4.metric("Bullish / Bearish", f"{bullish} / {bearish}")
+    st.caption(
+        "Bullish ≥ +25 / Bearish ≤ -25 on the composite — which already includes "
+        "the -25 anomaly penalty where flagged."
+    )

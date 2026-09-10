@@ -1,5 +1,6 @@
 """Tests for the nightly brief aggregation module."""
 
+import pandas as pd
 import pytest
 from src.database import init_db, db, Account, Holding, Setting
 from src import brief
@@ -218,3 +219,56 @@ def test_sync_watchlist_without_env(monkeypatch):
 def test_fetch_brief_watchlist_without_env(monkeypatch):
     monkeypatch.setattr("os.getenv", lambda k, d="": "")
     assert brief.fetch_brief_watchlist() == []
+
+
+# ---------------------------------------------------------------------------
+# Market overview (index moves + top news)
+# ---------------------------------------------------------------------------
+
+def _fake_history(closes):
+    idx = pd.date_range("2026-09-01", periods=len(closes), freq="D")
+    return pd.DataFrame({"Close": closes}, index=idx)
+
+
+def test_fetch_market_overview_best_effort(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(brief.data_client, "get_price_history", boom)
+    monkeypatch.setattr(brief.data_client, "get_macro_news", boom)
+    mkt = brief.fetch_market_overview()
+    assert mkt == {"indices": {}, "news": []}
+
+
+def test_fetch_market_overview_captures_data(monkeypatch):
+    monkeypatch.setattr(
+        brief.data_client, "get_price_history",
+        lambda *a, **k: _fake_history([100.0, 101.5]),
+    )
+    monkeypatch.setattr(
+        brief.data_client, "get_macro_news",
+        lambda *a, **k: [{"title": "Markets rally", "publisher": "X", "link": "http://x"}],
+    )
+    mkt = brief.fetch_market_overview()
+    assert mkt["indices"]["S&P 500"]["close"] == 101.5
+    assert abs(mkt["indices"]["S&P 500"]["chg_pct"] - 1.5) < 1e-6
+    assert mkt["news"][0]["title"] == "Markets rally"
+
+
+def test_market_summary_lines_renders(monkeypatch):
+    run = brief.run_brief(tickers=[])
+    run.market = {
+        "indices": {"S&P 500": {"close": 101.5, "chg_pct": 1.5},
+                    "NASDAQ": {"close": 2.0, "chg_pct": -0.5}},
+        "news": [{"title": "Markets rally", "publisher": "X", "link": ""}],
+    }
+    lines = brief._market_summary_lines(run)
+    joined = "\n".join(lines)
+    assert "Markets —" in joined
+    assert "S&P 500 +1.50%" in joined
+    assert "📰 Markets rally" in joined
+
+
+def test_market_summary_lines_empty(monkeypatch):
+    run = brief.run_brief(tickers=[])
+    assert brief._market_summary_lines(run) == []

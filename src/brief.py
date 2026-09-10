@@ -49,6 +49,7 @@ class BriefRun:
     weights_used: dict[str, float]
     scores: list[TickerScore] = field(default_factory=list)
     tickers: list[str] | None = None
+    market: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +308,7 @@ def _get_all_tickers() -> list[str]:
 def run_brief(
     tickers: list[str] | None = None,
     workers: int = 5,
+    fetch_market: bool = False,
 ) -> BriefRun:
     """Score every ticker and return a BriefRun.
 
@@ -314,6 +316,7 @@ def run_brief(
     ----------
     tickers : override ticker list (default = holdings ∪ watchlist).
     workers : thread pool size for parallel scoring.
+    fetch_market : also snapshot index moves + top market news into run.market.
     """
     if tickers is None:
         tickers = _get_all_tickers()
@@ -356,13 +359,79 @@ def run_brief(
 
     scores.sort(key=lambda s: s.composite, reverse=True)
 
+    market = None
+    if fetch_market:
+        market = fetch_market_overview()
+
     return BriefRun(
         run_date=date.today(),
         generated_at=datetime.now(),
         weights_used=weights,
         scores=scores,
         tickers=tickers,
+        market=market,
     )
+
+
+# ---------------------------------------------------------------------------
+# Market overview (index moves + top market news)
+# ---------------------------------------------------------------------------
+
+_INDEX_SYMBOLS = {
+    "S&P 500": "^GSPC",
+    "NASDAQ": "^IXIC",
+    "TSX 60": "^GSPTSE",
+}
+
+
+def fetch_market_overview() -> dict:
+    """Snapshot major index closes and top market news.
+
+    Best-effort: returns {"indices": {..}, "news": [..]} and never raises.
+    Used by the nightly brief so the webhook and dashboard can show one line
+    of non-stock-dependent context alongside the conviction scores.
+    """
+    indices: dict = {}
+    for name, symbol in _INDEX_SYMBOLS.items():
+        try:
+            hist = data_client.get_price_history(symbol, period="1mo")
+            closes = hist["Close"].dropna()
+            if len(closes) >= 2:
+                prev, last = closes.iloc[-2], closes.iloc[-1]
+                chg_pct = round((last - prev) / prev * 100, 2) if prev else 0.0
+                indices[name] = {"close": round(float(last), 2), "chg_pct": chg_pct}
+        except Exception as exc:
+            log.debug("Could not fetch %s index: %s", name, exc)
+
+    try:
+        news = data_client.get_macro_news()
+    except Exception as exc:
+        log.debug("Could not fetch macro news: %s", exc)
+        news = []
+
+    return {"indices": indices, "news": news}
+
+
+def _market_summary_lines(run: BriefRun) -> list[str]:
+    """One or two text lines summarizing run.market for webhook/CLI output."""
+    if not run.market:
+        return []
+    idx = run.market.get("indices") or {}
+    news = run.market.get("news") or []
+    lines = [f"**Markets — {run.run_date.isoformat()}**"]
+    parts = []
+    for name in ("S&P 500", "NASDAQ", "TSX 60"):
+        d = idx.get(name)
+        if d:
+            sign = "+" if d["chg_pct"] >= 0 else ""
+            parts.append(f"{name} {sign}{d['chg_pct']:.2f}%")
+    if parts:
+        lines.append("  " + " · ".join(parts))
+    if news:
+        headline = (news[0].get("title") or "").strip()
+        if headline:
+            lines.append(f"  📰 {headline}")
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +441,7 @@ def run_brief(
 _SUPABASE_TABLE_RUNS = "brief_runs"
 _SUPABASE_TABLE_SCORES = "ticker_scores"
 _SUPABASE_TABLE_WATCHLIST = "watchlist"
+_SUPABASE_TABLE_MARKET = "market_overview"
 
 
 def _supabase_rest_config() -> tuple[str, str]:
@@ -602,6 +672,21 @@ def persist_to_supabase(run: BriefRun) -> bool:
                 )
                 resp.raise_for_status()
 
+            # Upsert the market overview (indices + top news) for this date.
+            if run.market:
+                market_payload = {
+                    "run_date": run.run_date.isoformat(),
+                    "indices": run.market.get("indices") or {},
+                    "news": run.market.get("news") or [],
+                    "generated_at": run.generated_at.isoformat(),
+                }
+                resp = client.post(
+                    f"{rest_url}/{_SUPABASE_TABLE_MARKET}?on_conflict=run_date",
+                    json=market_payload,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+
         log.info(
             "Persisted brief run (id=%s) for %s with %d tickers.",
             run_id, run.run_date, len(run.scores),
@@ -634,6 +719,9 @@ def notify_webhook(run: BriefRun, webhook_url: str | None = None) -> bool:
         f"**Daily Brief — {run.run_date.isoformat()}**",
         f"Scored {len(run.scores)} tickers.\n",
     ]
+    market_lines = _market_summary_lines(run)
+    if market_lines:
+        lines += market_lines + ["\n"]
     if top3:
         lines.append("**Top Conviction:**")
         for s in top3:

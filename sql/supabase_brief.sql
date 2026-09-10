@@ -38,15 +38,26 @@ create table if not exists watchlist (
     added_at  timestamptz not null default now()
 );
 
+-- Non-stock market context stored per run: major index moves + top news,
+-- so the dashboard and webhook can recap the day beyond the tickers.
+create table if not exists market_overview (
+    run_date      date not null unique,
+    indices       jsonb not null default '{}'::jsonb,
+    news          jsonb not null default '[]'::jsonb,
+    generated_at  timestamptz not null default now()
+);
+
 -- Row-level security: the anon key (used by both the nightly `brief --persist`
 -- in CI and the read-only Streamlit dashboard) needs select + write access.
 alter table brief_runs    enable row level security;
 alter table ticker_scores enable row level security;
 alter table watchlist     enable row level security;
+alter table market_overview enable row level security;
 
 create policy "allow read" on brief_runs   for select using (true);
 create policy "allow read" on ticker_scores for select using (true);
 create policy "allow read" on watchlist    for select using (true);
+create policy "allow read" on market_overview for select using (true);
 
 create policy "allow write" on brief_runs
     for insert with check (true);
@@ -64,3 +75,8 @@ create policy "allow update" on watchlist
     for update using (true) with check (true);
 create policy "allow delete" on watchlist
     for delete using (true);
+
+create policy "allow write" on market_overview
+    for insert with check (true);
+create policy "allow update" on market_overview
+    for update using (true) with check (true);

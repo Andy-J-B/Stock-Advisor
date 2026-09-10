@@ -1107,7 +1107,7 @@ def brief_cmd(
         tickers_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
 
     with console.status("[bold cyan]Running nightly brief...[/bold cyan]"):
-        run = brief.run_brief(tickers=tickers_list, workers=workers)
+        run = brief.run_brief(tickers=tickers_list, workers=workers, fetch_market=True)
 
     if not run.scores:
         console.print("[yellow]No tickers to score.[/yellow]")

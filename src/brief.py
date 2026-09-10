@@ -11,6 +11,7 @@ already make.
 from __future__ import annotations
 
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -24,6 +25,12 @@ from src.database import (
 )
 
 log = logging.getLogger(__name__)
+
+# Serializes the CPU-heavy native inference steps (FinBERT/transformers, LightGBM,
+# scikit-learn) across the parallel scorer threads. Network fetches still overlap;
+# only one native call runs at a time. Prevents thread oversubscription crashes
+# (OpenMP + torch + sklearn interleaving under ThreadPoolExecutor segfaults).
+_native_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +81,8 @@ def score_sentiment(ticker: str) -> tuple[float, str]:
         return 0.0, "No valid headlines"
 
     engine = get_sentiment_engine()
-    scores = engine.score_batch(titles)
+    with _native_lock:
+        scores = engine.score_batch(titles)
     compounds = [s["compound"] for s in scores]
     avg = sum(compounds) / len(compounds) if compounds else 0.0
 
@@ -162,10 +170,11 @@ def score_ml(ticker: str) -> tuple[float, str]:
             return 0.0, "Not enough labeled data"
 
         try:
-            result = ml_model.train(X_train, y_train)
-            ml_model.save_model(result["model"], ticker, horizon, metadata={
-                "cv_accuracy": result["cv_accuracy"],
-            })
+            with _native_lock:
+                result = ml_model.train(X_train, y_train)
+                ml_model.save_model(result["model"], ticker, horizon, metadata={
+                    "cv_accuracy": result["cv_accuracy"],
+                })
             model = result["model"]
         except Exception as exc:
             log.warning("ML training failed for %s: %s", ticker, exc)
@@ -184,7 +193,8 @@ def score_ml(ticker: str) -> tuple[float, str]:
         return 0.0, "No valid feature row"
 
     try:
-        pred = ml_model.predict(model, latest.iloc[0])
+        with _native_lock:
+            pred = ml_model.predict(model, latest.iloc[0])
     except Exception:
         return 0.0, "Prediction failed"
 
@@ -229,7 +239,8 @@ def detect_anomaly(ticker: str) -> bool:
         return False
 
     feat = features.build_features(ohlcv)
-    flagged = anomaly.detect_anomalies(feat)
+    with _native_lock:
+        flagged = anomaly.detect_anomalies(feat)
     return not flagged.empty
 
 

@@ -1,7 +1,6 @@
 import os
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
 
 import pandas as pd
 import yfinance as yf

@@ -12,7 +12,6 @@ from src.features import (
     _rsi,
     _macd_histogram,
     _bollinger_pctb,
-    _atr,
     _ema_spread,
     _volume_zscore,
 )
@@ -92,7 +91,6 @@ class TestNoLookahead:
         assert pd.isna(pctb.iloc[19])
 
     def test_atr_is_shifted(self, synthetic_ohlcv):
-        row = synthetic_ohlcv.iloc[0]
         # ATR at row 0 should be NaN because it's shifted
         from src.features import _atr as atr_fn
         atr = atr_fn(synthetic_ohlcv["High"], synthetic_ohlcv["Low"], synthetic_ohlcv["Close"])

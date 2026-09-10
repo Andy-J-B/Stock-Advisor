@@ -26,7 +26,7 @@ from src.sentiment import (
 def _fake_pipeline_output(label: str, score: float) -> list[dict]:
     """Mimic the list-of-dicts that transformers pipeline returns with top_k=None."""
     labels = ["positive", "negative", "neutral"]
-    others = [l for l in labels if l != label]
+    others = [lab for lab in labels if lab != label]
     return [
         {"label": label, "score": score},
         {"label": others[0], "score": (1 - score) / 2},

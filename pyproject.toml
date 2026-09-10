@@ -1,0 +1,15 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Keep the genuinely valuable checks: pyflakes (unused imports/vars, undefined
+# names) and the core pycodestyle errors (imports, statements, runtime). The
+# noisier, opinionated rules (UP / BLE / SIM / DTZ / RUF / preview) are
+# intentionally not selected; they generate hundreds of legacy-dated warnings
+# across the codebase with little signal.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# Intentionally deferred imports that must run after env setup in tests.
+"tests/*" = ["E402"]

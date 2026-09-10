@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.optimizer import optimize, discrete_allocation, SUPPORTED_OBJECTIVES
+from src.optimizer import optimize, discrete_allocation
 
 
 @pytest.fixture

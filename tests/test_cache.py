@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import time
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
 
-import pytest
 import pandas as pd
 from peewee import SqliteDatabase
 

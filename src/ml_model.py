@@ -8,10 +8,7 @@ walk-forward (TimeSeriesSplit) validation.  Models are persisted to
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Any
@@ -60,7 +57,6 @@ def train(
     tscv = TimeSeriesSplit(n_splits=n_splits)
     fold_accuracies: list[float] = []
 
-    last_model = None
     for fold_idx, (train_idx, test_idx) in enumerate(tscv.split(X)):
         X_train, X_test = X[train_idx], X[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
@@ -83,7 +79,6 @@ def train(
         acc = accuracy_score(y_test, preds)
         fold_accuracies.append(acc)
         log.info("Fold %d: accuracy=%.3f", fold_idx + 1, acc)
-        last_model = model
 
     # Retrain on full data for final model
     final_model = lgb.LGBMClassifier(

@@ -2,7 +2,7 @@
 Streamlit dashboard for browsing nightly conviction score history.
 
 Run locally:
-    pip install streamlit sqlalchemy psycopg2-binary
+    pip install streamlit sqlalchemy "psycopg[binary]"
     streamlit run dashboard.py
 
 Requires a Supabase (or any Postgres) DATABASE_URL in Streamlit secrets
@@ -42,6 +42,12 @@ def _get_engine():
                 ".streamlit/secrets.toml to connect to your Supabase database."
             )
             st.stop()
+    # psycopg (v3) is the supported driver; alias the Postgres scheme so
+    # SQLAlchemy uses the psycopg3 dialect instead of the legacy psycopg2.
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://"):]
+    elif url.startswith("postgres://"):
+        url = "postgresql+psycopg://" + url[len("postgres://"):]
     return create_engine(url)
 
 

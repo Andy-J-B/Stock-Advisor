@@ -1,9 +1,9 @@
 name: Nightly Brief
 
 on:
-  schedule:
-    - cron: '21 15 * * 1-5'   # 08:21 PDT (15:21 UTC) — weekdays only
-  workflow_dispatch: {}        # manual trigger for testing
+  # schedule:
+  #   - cron: '21 15 * * 1-5'   # 08:21 PDT (15:21 UTC) — weekdays only
+  workflow_dispatch: {} # manual trigger for testing
 
 jobs:
   brief:
@@ -14,8 +14,8 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
-          cache: 'pip'
+          python-version: "3.12"
+          cache: "pip"
 
       - name: Install dependencies
         run: pip install -r requirements.txt

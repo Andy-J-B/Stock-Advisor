@@ -11,6 +11,7 @@ already make.
 from __future__ import annotations
 
 import logging
+import statistics
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -47,6 +48,22 @@ class TickerScore:
     analyst: float = 0.0
     anomaly_flag: bool = False
     reasoning: str = ""
+    # Enrichment fields (filled after scoring)
+    prev_composite: float | None = None
+    score_delta: float | None = None
+    anomaly_detail: str = ""
+    analyst_breakdown: str = ""
+    top_headline: str = ""
+    signal_agreement: str = ""
+    price: float = 0.0
+    day_change_pct: float = 0.0
+    portfolio_weight: float = 0.0
+    portfolio_value: float = 0.0
+    new_entrant: bool = False
+    anomaly_new: bool = False
+    rank_change: int | None = None
+    recommendation: str = ""
+    overexposed: bool = False
 
 
 @dataclass
@@ -57,6 +74,13 @@ class BriefRun:
     scores: list[TickerScore] = field(default_factory=list)
     tickers: list[str] | None = None
     market: dict | None = None
+    # Enrichment fields
+    prev_run_date: date | None = None
+    biggest_movers: list[TickerScore] = field(default_factory=list)
+    new_entrants: list[str] = field(default_factory=list)
+    exits: list[str] = field(default_factory=list)
+    anomaly_flips: list[dict] = field(default_factory=list)
+    portfolio_total_value: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -64,8 +88,11 @@ class BriefRun:
 # ---------------------------------------------------------------------------
 
 
-def score_sentiment(ticker: str) -> tuple[float, str]:
-    """Score sentiment from recent news headlines. Returns (score, reasoning)."""
+def score_sentiment(ticker: str) -> tuple[float, str, str]:
+    """Score sentiment from recent news headlines.
+
+    Returns (score, reasoning, top_headline).
+    """
     resolved = data_client.get_ticker_news(ticker, limit=10)
     if not resolved:
         # Try US ticker via ticker_map
@@ -74,11 +101,13 @@ def score_sentiment(ticker: str) -> tuple[float, str]:
         if us != ticker:
             resolved = data_client.get_ticker_news(us, limit=10)
     if not resolved:
-        return 0.0, "No news found"
+        return 0.0, "No news found", ""
 
     titles = [a.get("title", "") for a in resolved if a.get("title")]
     if not titles:
-        return 0.0, "No valid headlines"
+        return 0.0, "No valid headlines", ""
+
+    headline = titles[0].strip()
 
     engine = get_sentiment_engine()
     with _native_lock:
@@ -91,7 +120,7 @@ def score_sentiment(ticker: str) -> tuple[float, str]:
     pos = sum(1 for s in scores if s["label"] == "positive")
     neg = sum(1 for s in scores if s["label"] == "negative")
     reason = f"{len(titles)} headlines, {pos} positive, {neg} negative"
-    return normalized, reason
+    return normalized, reason, headline
 
 
 def score_technical(ticker: str) -> tuple[float, str]:
@@ -205,13 +234,16 @@ def score_ml(ticker: str) -> tuple[float, str]:
     return normalized, reason
 
 
-def score_analyst(ticker: str) -> tuple[float, str]:
-    """Score analyst consensus. Returns (score, reasoning)."""
+def score_analyst(ticker: str) -> tuple[float, str, str]:
+    """Score analyst consensus.
+
+    Returns (score, reasoning, breakdown_summary e.g. "15 bull, 0 hold, 0 bear").
+    """
     from src.screener import _analyst, rating_label
 
     data = _analyst(ticker)
     if data is None:
-        return 0.0, "No analyst coverage"
+        return 0.0, "No analyst coverage", ""
 
     data["total"] = (
         data["strong_buy"] + data["buy"] + data["hold"]
@@ -221,6 +253,7 @@ def score_analyst(ticker: str) -> tuple[float, str]:
     bull = data["strong_buy"] + data["buy"]
     bear = data["sell"] + data["strong_sell"]
     hold = data["hold"]
+    breakdown = f"{bull} bull, {hold} hold, {bear} bear, {total} total"
 
     # Score: strong_buy=+2, buy=+1, hold=0, sell=-1, strong_sell=-2
     raw = (2 * data["strong_buy"] + data["buy"] - data["sell"] - 2 * data["strong_sell"]) / total
@@ -228,20 +261,26 @@ def score_analyst(ticker: str) -> tuple[float, str]:
     normalized = round(raw * 50, 1)
 
     label, _ = rating_label(data)
-    reason = f"{label} ({bull} bull, {hold} hold, {bear} bear, {total} total)"
-    return normalized, reason
+    reason = f"{label} ({breakdown})"
+    return normalized, reason, breakdown
 
 
-def detect_anomaly(ticker: str) -> bool:
-    """Return True if the ticker shows anomalous activity."""
+def detect_anomaly(ticker: str) -> tuple[bool, str]:
+    """Return (is_flagged, detail_text) for anomalous activity.
+
+    The detail text comes from ``anomaly.summarize_anomalies`` so users can
+    see *why* a ticker was flagged, not just that it was.
+    """
     ohlcv = data_client.get_price_history(ticker, period="6mo")
     if ohlcv.empty or ohlcv.shape[0] < 30:
-        return False
+        return False, ""
 
     feat = features.build_features(ohlcv)
     with _native_lock:
         flagged = anomaly.detect_anomalies(feat)
-    return not flagged.empty
+    if flagged.empty:
+        return False, ""
+    return True, (anomaly.summarize_anomalies(flagged, ticker) or "")
 
 
 # ---------------------------------------------------------------------------
@@ -256,11 +295,11 @@ def compute_composite(
     """Compute the conviction score for a single ticker."""
     log.info("Scoring %s ...", ticker)
 
-    sentiment_score, sentiment_reason = score_sentiment(ticker)
+    sentiment_score, sentiment_reason, headline = score_sentiment(ticker)
     technical_score, technical_reason = score_technical(ticker)
     ml_score, ml_reason = score_ml(ticker)
-    analyst_score, analyst_reason = score_analyst(ticker)
-    anomaly_flag = detect_anomaly(ticker)
+    analyst_score, analyst_reason, analyst_breakdown = score_analyst(ticker)
+    anomaly_flag, anomaly_detail = detect_anomaly(ticker)
 
     composite = (
         weights.get("sentiment", 0.25) * sentiment_score
@@ -293,6 +332,9 @@ def compute_composite(
         analyst=analyst_score,
         anomaly_flag=anomaly_flag,
         reasoning=" | ".join(reasoning_parts),
+        anomaly_detail=anomaly_detail,
+        analyst_breakdown=analyst_breakdown,
+        top_headline=headline,
     )
 
 
@@ -374,7 +416,7 @@ def run_brief(
     if fetch_market:
         market = fetch_market_overview()
 
-    return BriefRun(
+    run = BriefRun(
         run_date=date.today(),
         generated_at=datetime.now(),
         weights_used=weights,
@@ -382,6 +424,197 @@ def run_brief(
         tickers=tickers,
         market=market,
     )
+    _enrich_run(run)
+    return run
+
+
+# ---------------------------------------------------------------------------
+# Brief enrichment: history deltas, portfolio context, per-ticker details
+# ---------------------------------------------------------------------------
+
+
+def _signal_agreement(s: TickerScore) -> str:
+    """Label how much the four component scores agree with each other.
+
+    Low dispersion across components = high confidence; wide spread = the
+    signals are pulling in different directions.
+    """
+    parts = [s.sentiment, s.technical, s.ml_pred, s.analyst]
+    active = [p for p in parts if p != 0.0]
+    if len(active) < 2:
+        return "Low coverage" if not active else "Agreeing"
+    spread = statistics.pstdev(active)
+    if spread < 15:
+        return "High agreement"
+    if spread < 35:
+        return "Moderate"
+    return "Conflicted"
+
+
+def _get_holdings_map() -> dict[str, dict]:
+    """Return {ticker: {"shares": float, "account": str}} for current holdings."""
+    holdings: dict[str, dict] = {}
+    for acc in Account.select():
+        for h in acc.holdings:
+            holdings[h.ticker] = {"shares": h.shares, "account": acc.name}
+    return holdings
+
+
+def _fetch_prev_run_scores() -> tuple[date | None, dict[str, dict]]:
+    """Best-effort fetch of the previous persisted brief run's scores.
+
+    Returns (prev_run_date, {ticker: {"composite": float, "anomaly_flag": bool}}).
+    Uses the same PostgREST pattern as ``fetch_brief_universe`` so scoring
+    still works when Supabase is not configured or unreachable.
+    """
+    import httpx
+
+    rest_url, api_key = _supabase_rest_config()
+    if not rest_url or not api_key:
+        return None, {}
+
+    headers = {"apikey": api_key, "Accept": "application/json"}
+    today = date.today().isoformat()
+    try:
+        with httpx.Client(timeout=15) as client:
+            # Latest persisted run strictly before today.
+            resp = client.get(
+                f"{rest_url}/{_SUPABASE_TABLE_RUNS}"
+                f"?select=id,run_date&run_date=lt.{today}"
+                "&order=run_date.desc&limit=1",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            rows = resp.json()
+            if not rows:
+                return None, {}
+            prev_date = rows[0].get("run_date")
+            prev_id = rows[0].get("id")
+
+            resp = client.get(
+                f"{rest_url}/{_SUPABASE_TABLE_SCORES}"
+                f"?select=ticker,composite,anomaly_flag&run_id=eq.{prev_id}",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            prev: dict[str, dict] = {}
+            for r in resp.json():
+                ticker = r.get("ticker")
+                if ticker:
+                    prev[ticker] = {
+                        "composite": float(r.get("composite") or 0.0),
+                        "anomaly_flag": bool(r.get("anomaly_flag")),
+                    }
+        if prev_date:
+            try:
+                prev_dt = date.fromisoformat(str(prev_date))
+            except ValueError:
+                prev_dt = None
+            return prev_dt, prev
+    except Exception as exc:
+        log.warning("Could not fetch previous brief run: %s", exc)
+    return None, {}
+
+
+def _recommendation(s: TickerScore) -> tuple[str, bool]:
+    """Rule-based action hint based on conviction + position size.
+
+    Returns (recommendation_text, overexposed_flag). Pure heuristics — useful
+    as a nudge, not financial advice.
+    """
+    weight = s.portfolio_weight or 0.0
+    overexposed = weight >= 20.0
+    if s.composite >= 25:
+        if overexposed:
+            return "Hold — strong conviction but already a large position", True
+        return "Add / accumulate", False
+    if s.composite <= -25:
+        if s.portfolio_weight and s.portfolio_weight > 0:
+            return "Reduce / consider trimming", overexposed
+        return "Avoid — no position", False
+    if overexposed:
+        return "Watch — large position, neutral conviction", True
+    return "Hold / watch", False
+
+
+def _enrich_run(run: BriefRun) -> None:
+    """Fill in deltas, movers, portfolio context, and per-ticker details.
+
+    Runs after scoring; every step is best-effort and never raises.
+    """
+    # --- Live prices for all scored tickers ---------------------------------
+    scored_tickers = [s.ticker for s in run.scores]
+    prices: dict[str, tuple[float, float]] = {}
+    if scored_tickers:
+        try:
+            prices = data_client.get_current_prices_batch(scored_tickers)
+        except Exception as exc:
+            log.warning("Could not fetch live prices: %s", exc)
+
+    for s in run.scores:
+        price, prev_close = prices.get(s.ticker, (0.0, 0.0))
+        s.price = round(float(price), 2)
+        if price and prev_close:
+            s.day_change_pct = round((price - prev_close) / prev_close * 100, 2)
+        s.signal_agreement = _signal_agreement(s)
+
+    # --- Portfolio weight / value for holdings ------------------------------
+    holdings = _get_holdings_map()
+    if holdings:
+        try:
+            usd_to_cad = data_client.get_usd_to_cad()
+        except Exception:
+            usd_to_cad = 1.0
+        total_value = 0.0
+        for t, info in holdings.items():
+            price, _ = prices.get(t, (0.0, 0.0))
+            multiplier = usd_to_cad if info["account"] == "USD" else 1.0
+            info["value"] = info["shares"] * price * multiplier
+            total_value += info["value"]
+        run.portfolio_total_value = round(total_value, 2)
+        if total_value > 0:
+            for s in run.scores:
+                info = holdings.get(s.ticker)
+                if info:
+                    s.portfolio_value = round(info["value"], 2)
+                    s.portfolio_weight = round(info["value"] / total_value * 100, 2)
+
+    # --- Actionability hints --------------------------------------------------
+    for s in run.scores:
+        s.recommendation, s.overexposed = _recommendation(s)
+
+    # --- History deltas via the previous persisted run -----------------------
+    prev_date, prev = _fetch_prev_run_scores()
+    if prev_date is not None and prev:
+        run.prev_run_date = prev_date
+        prev_ranks = {t: i for i, t in enumerate(
+            sorted(prev, key=lambda t: prev[t]["composite"], reverse=True)
+        )}
+        current_ranks = {s.ticker: i for i, s in enumerate(run.scores)}
+        for rank, s in enumerate(run.scores):
+            old = prev.get(s.ticker)
+            if old is None:
+                s.new_entrant = True
+                run.new_entrants.append(s.ticker)
+            else:
+                s.prev_composite = old["composite"]
+                s.score_delta = round(s.composite - old["composite"], 1)
+                if old["composite"] is not None:
+                    prev_rank = prev_ranks.get(s.ticker)
+                    curr_rank = current_ranks[s.ticker]
+                    if prev_rank is not None:
+                        s.rank_change = prev_rank - curr_rank
+                if not old["anomaly_flag"] and s.anomaly_flag:
+                    s.anomaly_new = True
+                    run.anomaly_flips.append({"ticker": s.ticker, "new": True})
+
+        # Detected in the previous run but absent from ours.
+        scored_set = {s.ticker for s in run.scores}
+        run.exits = sorted(t for t in prev if t not in scored_set)
+
+        movers = [s for s in run.scores if s.score_delta is not None]
+        movers.sort(key=lambda s: abs(s.score_delta or 0.0), reverse=True)
+        run.biggest_movers = movers[:5]
 
 
 # ---------------------------------------------------------------------------
@@ -669,6 +902,14 @@ def persist_to_supabase(run: BriefRun) -> bool:
                     "analyst": s.analyst,
                     "anomaly_flag": s.anomaly_flag,
                     "reasoning": s.reasoning,
+                    "price": s.price or None,
+                    "day_change_pct": s.day_change_pct or None,
+                    "top_headline": s.top_headline or None,
+                    "analyst_breakdown": s.analyst_breakdown or None,
+                    "signal_agreement": s.signal_agreement or None,
+                    "anomaly_detail": s.anomaly_detail or None,
+                    "portfolio_weight": s.portfolio_weight or None,
+                    "recommendation": s.recommendation or None,
                 }
                 for s in run.scores
             ]
@@ -737,12 +978,29 @@ def notify_webhook(run: BriefRun, webhook_url: str | None = None) -> bool:
         lines.append("**Top Conviction:**")
         for s in top3:
             emoji = "🟢" if s.composite >= 0 else "🔴"
-            lines.append(f"  {emoji} {s.ticker}: {s.composite:+.1f}")
+            base = f"{emoji} {s.ticker}: {s.composite:+.1f}"
+            if s.score_delta is not None:
+                base += f" (Δ {s.score_delta:+.1f})"
+            lines.append("  " + base)
     if bottom3:
         lines.append("\n**Lowest Conviction:**")
         for s in bottom3:
             emoji = "🟢" if s.composite >= 0 else "🔴"
-            lines.append(f"  {emoji} {s.ticker}: {s.composite:+.1f}")
+            base = f"{emoji} {s.ticker}: {s.composite:+.1f}"
+            if s.score_delta is not None:
+                base += f" (Δ {s.score_delta:+.1f})"
+            lines.append("  " + base)
+    if run.biggest_movers:
+        lines.append("\n**Biggest Movers:**")
+        for s in run.biggest_movers:
+            lines.append(f"  • {s.ticker}: {s.composite:+.1f} ({s.score_delta:+.1f} vs {run.prev_run_date})")
+    if run.anomaly_flips:
+        flips = ", ".join(f["ticker"] for f in run.anomaly_flips)
+        lines.append(f"\n⚠️ Newly flagged anomalies: {flips}")
+    if run.new_entrants:
+        lines.append(f"🆕 New tickers: {', '.join(run.new_entrants)}")
+    if run.exits:
+        lines.append(f"➖ Dropped: {', '.join(run.exits)}")
 
     payload = {"content": "\n".join(lines)} if "discord" in url else {"text": "\n".join(lines)}
 

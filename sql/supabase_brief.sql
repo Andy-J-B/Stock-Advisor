@@ -28,6 +28,16 @@ create table if not exists ticker_scores (
     unique (run_id, ticker)
 );
 
+-- Richer per-ticker enrichment captured with each run (best-effort columns).
+alter table ticker_scores add column if not exists price numeric;
+alter table ticker_scores add column if not exists day_change_pct numeric;
+alter table ticker_scores add column if not exists top_headline text;
+alter table ticker_scores add column if not exists analyst_breakdown text;
+alter table ticker_scores add column if not exists signal_agreement text;
+alter table ticker_scores add column if not exists anomaly_detail text;
+alter table ticker_scores add column if not exists portfolio_weight numeric;
+alter table ticker_scores add column if not exists recommendation text;
+
 -- Create index so the dashboard's per-ticker history lookup is fast.
 create index if not exists idx_ticker_scores_ticker_run on ticker_scores (ticker, run_id);
 

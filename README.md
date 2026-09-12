@@ -142,6 +142,15 @@ conviction = 0.25*sentiment + 0.20*technical + 0.30*ml_pred + 0.25*analyst  (+ a
 Raw components are stored alongside the composite so the dashboard can show *why* a score
 moved, and weightings can be backtested retroactively.
 
+On every run the brief also enriches each score with live context and stores it:
+current price + daily % change, the top news headline used, the analyst
+bull/hold/bear breakdown, a signal-agreement label (how much the four factors
+agree), the anomaly detail (which days were unusual and why), the portfolio
+weight/market value if the ticker is held, a rule-based action suggestion, and —
+when a previous run exists — the composite delta and rank change. Deltas, biggest
+movers, new entrants/exits and newly flagged anomalies show up in the CLI table,
+the webhook, and the dashboard.
+
 On every run the brief also snapshots a **market overview** (best-effort — any
 failed source is skipped, never fails the run): close + daily % change for the
 S&P 500, NASDAQ, and TSX 60 (from yfinance), plus the top 5 macro headlines
@@ -175,7 +184,7 @@ python main.py brief-weights --sentiment 0.30 --ml 0.30
    - `SUPABASE_PUBLISHABLE_KEY` — `Settings → API → Publishable key` (`sb_publishable_...`). Use the **publishable** key (not the legacy `anon`, which is deprecated by end of 2026; not the secret key, which bypasses RLS). The RLS policies in the schema grant it read + write on these tables.
 3. `python main.py brief --persist` upserts into:
    - `brief_runs` — one row per `run_date` (weights used + ticker list)
-   - `ticker_scores` — one row per (run, ticker) with composite + raw components
+   - `ticker_scores` — one row per (run, ticker) with composite + raw components + enrichment (`price`, `day_change_pct`, `top_headline`, `analyst_breakdown`, `signal_agreement`, `anomaly_detail`, `portfolio_weight`, `recommendation`)
    - `market_overview` — one row per `run_date` (indices + top news snapshot)
    - `watchlist` — the current watchlist, synced after any change and after a `--persist`
 4. `python main.py brief --notify` posts the score summary **plus the market recap** to your webhook.
@@ -183,9 +192,11 @@ python main.py brief-weights --sentiment 0.30 --ml 0.30
 ### Automated nightly runs
 
 `.github/workflows/nightly-brief.yml` runs `brief --persist --notify` on a cron
-(weekdays 05:30 UTC, after US close) and posts a failure alert to your webhook.
-Add the API keys + `DATABASE_URL`/`DATABASE_REST_URL`/`SUPABASE_PUBLISHABLE_KEY`/
-`NOTIFY_WEBHOOK_URL` as repo Actions secrets.
+(weekdays 21:53 UTC = 14:53 PDT, after US close) and posts a failure alert to
+your webhook. (`.gitlab-ci.yml` provides the same jobs for running it on GitLab
+schedules instead.) Add the API keys + `DATABASE_URL`/`DATABASE_REST_URL`/
+`SUPABASE_PUBLISHABLE_KEY`/`NOTIFY_WEBHOOK_URL` as repo Actions secrets (or GitLab
+project CI/CD variables).
 
 ### History dashboard (Streamlit)
 
@@ -199,9 +210,10 @@ The dashboard is a pure read-only viewer over the Postgres history tables
 (**no coupling to the local `portfolio.db`**):
 - Prev/◀/▶/next buttons + date slider to scrub through days
 - Market overview for the selected day: S&P 500 / NASDAQ / TSX 60 close + daily change, and top macro headlines
-- Color-coded conviction table with per-component breakdown and anomaly flags
-- Per-ticker history line chart (composite + all 4 components over time)
-- Expandable reasoning panel explaining each score
+- Color-coded conviction table with per-component breakdown, anomaly flags, price, daily % change, Δ vs the previous run (color-coded), signal agreement, and action hint
+- Score distribution histogram and a Biggest Movers panel for the selected day
+- Per-ticker history line chart (composite + all 4 components over time), plus a component breakdown area chart
+- Expandable per-ticker details panel: top headline, analyst breakdown, signal agreement, anomaly detail, action suggestion, and full reasoning
 
 ## Key Subsystems
 
@@ -263,6 +275,6 @@ Fetches S&P 500 / TSX 60 constituents from Wikipedia (cached 7d). Ranks by analy
 .venv/bin/python -m pytest tests/ -v
 ```
 
-228 tests across 16 files: cache, database, portfolio, indicators, risk, optimizer, sentiment, features, ML model, anomaly detection, screener, brief (scores + market overview), Canadian-to-US ticker mapping, and CLI helpers.
+234 tests across 16 files: cache, database, portfolio, indicators, risk, optimizer, sentiment, features, ML model, anomaly detection, screener, brief (scores, market overview, enrichment + recommendations), Canadian-to-US ticker mapping, and CLI helpers.
 
 CI: ruff lint + pytest with coverage (Python 3.12). `run_brief()` is headless-safe under CI/non-TTY (default risk allocation instead of the interactive setup prompt).

@@ -7,7 +7,7 @@ from src import brief
 
 
 @pytest.fixture(autouse=True)
-def memory_db():
+def memory_db(monkeypatch):
     """Fresh in-memory DB for each test."""
     if not db.is_closed():
         db.close()
@@ -15,6 +15,14 @@ def memory_db():
     db.init(":memory:")
     db.connect()
     init_db(skip_migration=True)
+    # Enrichment backfills live prices; stub the network calls so scoring
+    # tests stay hermetic (no yfinance / FX requests).
+    monkeypatch.setattr(
+        brief.data_client, "get_current_prices_batch", lambda tickers: {
+            t: (0.0, 0.0) for t in tickers
+        }
+    )
+    monkeypatch.setattr(brief.data_client, "get_usd_to_cad", lambda: 1.0)
     yield
     db.drop_tables([Account, Holding, Setting])
     db.close()
@@ -27,9 +35,10 @@ def memory_db():
 
 def test_score_sentiment_no_news(monkeypatch):
     monkeypatch.setattr(brief.data_client, "get_ticker_news", lambda *a, **k: [])
-    score, reason = brief.score_sentiment("MSFT")
+    score, reason, headline = brief.score_sentiment("MSFT")
     assert score == 0.0
     assert "No news" in reason
+    assert headline == ""
 
 
 def test_score_sentiment_uses_finbert(monkeypatch):
@@ -48,10 +57,11 @@ def test_score_sentiment_uses_finbert(monkeypatch):
     monkeypatch.setattr(brief.data_client, "get_ticker_news", lambda *a, **k: news)
     monkeypatch.setattr(brief, "get_sentiment_engine", lambda: FakeEngine())
 
-    score, reason = brief.score_sentiment("MSFT")
+    score, reason, headline = brief.score_sentiment("MSFT")
     assert score > 0  # positive headlines yield positive score
     assert score <= 100
     assert "positive" in reason
+    assert headline == news[0]["title"]
 
 
 def test_score_technical_insufficient_data(monkeypatch):
@@ -65,9 +75,10 @@ def test_score_technical_insufficient_data(monkeypatch):
 def test_score_analyst_no_coverage(monkeypatch):
     import src.screener as screener
     monkeypatch.setattr(screener, "_analyst", lambda t: None)
-    score, reason = brief.score_analyst("MSFT")
+    score, reason, breakdown = brief.score_analyst("MSFT")
     assert score == 0.0
     assert "No analyst coverage" in reason
+    assert breakdown == ""
 
 
 def test_score_analyst_uses_consensus(monkeypatch):
@@ -77,15 +88,18 @@ def test_score_analyst_uses_consensus(monkeypatch):
         "strong_buy": 5, "buy": 10, "hold": 2, "sell": 0, "strong_sell": 0,
     }
     monkeypatch.setattr(screener, "_analyst", lambda t: data)
-    score, reason = brief.score_analyst("MSFT")
+    score, reason, breakdown = brief.score_analyst("MSFT")
     assert score > 0
     assert "15 bull" in reason
+    assert breakdown == "15 bull, 2 hold, 0 bear, 17 total"
 
 
 def test_detect_anomaly_no_data(monkeypatch):
     import pandas as pd
     monkeypatch.setattr(brief.data_client, "get_price_history", lambda *a, **k: pd.DataFrame())
-    assert brief.detect_anomaly("MSFT") is False
+    flag, detail = brief.detect_anomaly("MSFT")
+    assert flag is False
+    assert detail == ""
 
 
 # ---------------------------------------------------------------------------
@@ -93,11 +107,11 @@ def test_detect_anomaly_no_data(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_compute_composite_basic(monkeypatch):
-    monkeypatch.setattr(brief, "score_sentiment", lambda t: (10.0, "news"))
+    monkeypatch.setattr(brief, "score_sentiment", lambda t: (10.0, "news", "Headline A"))
     monkeypatch.setattr(brief, "score_technical", lambda t: (20.0, "tech"))
     monkeypatch.setattr(brief, "score_ml", lambda t: (30.0, "ml"))
-    monkeypatch.setattr(brief, "score_analyst", lambda t: (40.0, "analyst"))
-    monkeypatch.setattr(brief, "detect_anomaly", lambda t: False)
+    monkeypatch.setattr(brief, "score_analyst", lambda t: (40.0, "analyst", ""))
+    monkeypatch.setattr(brief, "detect_anomaly", lambda t: (False, ""))
 
     weights = {"sentiment": 0.25, "technical": 0.20, "ml_pred": 0.30, "analyst": 0.25}
     result = brief.compute_composite("MSFT", weights)
@@ -109,14 +123,15 @@ def test_compute_composite_basic(monkeypatch):
     assert result.ml_pred == 30.0
     assert result.analyst == 40.0
     assert result.anomaly_flag is False
+    assert result.top_headline == "Headline A"
 
 
 def test_compute_composite_anomaly_penalty(monkeypatch):
-    monkeypatch.setattr(brief, "score_sentiment", lambda t: (50.0, "news"))
+    monkeypatch.setattr(brief, "score_sentiment", lambda t: (50.0, "news", ""))
     monkeypatch.setattr(brief, "score_technical", lambda t: (50.0, "tech"))
     monkeypatch.setattr(brief, "score_ml", lambda t: (50.0, "ml"))
-    monkeypatch.setattr(brief, "score_analyst", lambda t: (50.0, "analyst"))
-    monkeypatch.setattr(brief, "detect_anomaly", lambda t: True)
+    monkeypatch.setattr(brief, "score_analyst", lambda t: (50.0, "analyst", ""))
+    monkeypatch.setattr(brief, "detect_anomaly", lambda t: (True, "Unusual volume"))
 
     weights = {"sentiment": 0.25, "technical": 0.20, "ml_pred": 0.30, "analyst": 0.25}
     result = brief.compute_composite("MSFT", weights)
@@ -124,6 +139,7 @@ def test_compute_composite_anomaly_penalty(monkeypatch):
     expected = 50.0 - 25.0  # all components = 50, minus 25 anomaly penalty
     assert result.composite == round(expected, 1)
     assert result.anomaly_flag is True
+    assert result.anomaly_detail == "Unusual volume"
     assert "ANOMALY PENALTY" in result.reasoning
 
 
@@ -136,11 +152,11 @@ def test_compute_composite_clamps_to_100():
 
 
 def test_composite_clamped_in_compute(monkeypatch):
-    monkeypatch.setattr(brief, "score_sentiment", lambda t: (100.0, "news"))
+    monkeypatch.setattr(brief, "score_sentiment", lambda t: (100.0, "news", ""))
     monkeypatch.setattr(brief, "score_technical", lambda t: (100.0, "tech"))
     monkeypatch.setattr(brief, "score_ml", lambda t: (100.0, "ml"))
-    monkeypatch.setattr(brief, "score_analyst", lambda t: (100.0, "analyst"))
-    monkeypatch.setattr(brief, "detect_anomaly", lambda t: False)
+    monkeypatch.setattr(brief, "score_analyst", lambda t: (100.0, "analyst", ""))
+    monkeypatch.setattr(brief, "detect_anomaly", lambda t: (False, ""))
 
     weights = {"sentiment": 0.25, "technical": 0.20, "ml_pred": 0.30, "analyst": 0.25}
     result = brief.compute_composite("MSFT", weights)
@@ -272,3 +288,49 @@ def test_market_summary_lines_renders(monkeypatch):
 def test_market_summary_lines_empty(monkeypatch):
     run = brief.run_brief(tickers=[])
     assert brief._market_summary_lines(run) == []
+
+
+# ---------------------------------------------------------------------------
+# Rule-based action hints
+# ---------------------------------------------------------------------------
+
+def test_recommendation_bullish_no_position():
+    s = brief.TickerScore(ticker="MSFT", composite=40.0)
+    rec, over = brief._recommendation(s)
+    assert rec == "Add / accumulate"
+    assert not over
+
+
+def test_recommendation_bullish_but_overexposed():
+    s = brief.TickerScore(ticker="MSFT", composite=40.0, portfolio_weight=25.0)
+    rec, over = brief._recommendation(s)
+    assert "large position" in rec
+    assert over
+
+
+def test_recommendation_bearish_held():
+    s = brief.TickerScore(ticker="MSFT", composite=-40.0, portfolio_weight=10.0)
+    rec, over = brief._recommendation(s)
+    assert "Reduce" in rec
+    assert not over
+
+
+def test_recommendation_bearish_no_position():
+    s = brief.TickerScore(ticker="MSFT", composite=-40.0)
+    rec, over = brief._recommendation(s)
+    assert rec == "Avoid — no position"
+    assert not over
+
+
+def test_recommendation_overexposed_neutral():
+    s = brief.TickerScore(ticker="MSFT", composite=5.0, portfolio_weight=30.0)
+    rec, over = brief._recommendation(s)
+    assert "Watch" in rec
+    assert over
+
+
+def test_recommendation_neutral():
+    s = brief.TickerScore(ticker="MSFT", composite=5.0)
+    rec, over = brief._recommendation(s)
+    assert rec == "Hold / watch"
+    assert not over

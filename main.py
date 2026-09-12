@@ -1121,11 +1121,14 @@ def brief_cmd(
     table.add_column("#", justify="right", style="dim")
     table.add_column("Ticker", style="bold cyan")
     table.add_column("Composite", justify="right", style="bold")
+    table.add_column("Δ", justify="right")
     table.add_column("Sentiment", justify="right")
     table.add_column("Technical", justify="right")
     table.add_column("ML", justify="right")
     table.add_column("Analyst", justify="right")
     table.add_column("Anomaly", justify="center")
+    table.add_column("Price", justify="right")
+    table.add_column("Pos %", justify="right")
 
     for i, s in enumerate(run.scores, 1):
         # Color composite by sign
@@ -1138,18 +1141,42 @@ def brief_cmd(
 
         anomaly_cell = "[red]YES[/red]" if s.anomaly_flag else "[dim]no[/dim]"
 
+        delta_cell = "[dim]—[/dim]"
+        if s.score_delta is not None:
+            if abs(s.score_delta) < 0.05:
+                delta_cell = f"[dim]{s.score_delta:+.1f}[/dim]"
+            elif s.score_delta > 0:
+                delta_cell = f"[bold green]{s.score_delta:+.1f}[/bold green]"
+            else:
+                delta_cell = f"[bold red]{s.score_delta:+.1f}[/bold red]"
+        if s.rank_change is not None and s.rank_change != 0:
+            arrow = "↑" if s.rank_change > 0 else "↓"
+            delta_cell += f" [dim]{arrow}{abs(s.rank_change)}[/dim]"
+        new_marker = " [cyan]NEW[/cyan]" if s.new_entrant else ""
+        price_cell = f"{s.price:,.2f}" if s.price else "[dim]—[/dim]"
+        pos_cell = f"{s.portfolio_weight:.1f}%" if s.portfolio_weight else "[dim]—[/dim]"
+
         table.add_row(
             str(i),
-            s.ticker,
+            s.ticker + new_marker,
             f"[{comp_style}]{s.composite:+.1f}[/{comp_style}]",
+            delta_cell,
             f"{s.sentiment:+.1f}",
             f"{s.technical:+.1f}",
             f"{s.ml_pred:+.1f}",
             f"{s.analyst:+.1f}",
             anomaly_cell,
+            price_cell,
+            pos_cell,
         )
 
     console.print(table)
+
+    if run.prev_run_date is not None:
+        console.print(
+            f"[dim]Compared against {run.prev_run_date} · "
+            f"{len(run.new_entrants)} new · {len(run.exits)} dropped[/dim]"
+        )
 
     # Show reasoning for top and bottom
     top = run.scores[0]
@@ -1162,6 +1189,53 @@ def brief_cmd(
                 title="Top & Bottom Scores",
                 border_style="bright_blue",
             )
+        )
+
+    # Highlight the biggest movers vs the previous run
+    if run.biggest_movers:
+        mover_lines = []
+        for s in run.biggest_movers:
+            mover_lines.append(
+                f"  {s.ticker}: {s.composite:+.1f} "
+                f"([bold]{s.score_delta:+.1f}[/bold] vs {run.prev_run_date})"
+            )
+        console.print(
+            Panel("\n".join(mover_lines), title="Biggest Movers", border_style="bright_blue")
+        )
+
+    # Anomaly flips + new entrants/exits
+    change_lines = []
+    if run.anomaly_flips:
+        change_lines.append(
+            "Newly flagged anomalies: "
+            + ", ".join(f"[red]{f['ticker']}[/red]" for f in run.anomaly_flips)
+        )
+    if run.new_entrants:
+        change_lines.append("New tickers: " + ", ".join(f"[cyan]{t}[/cyan]" for t in run.new_entrants))
+    if run.exits:
+        change_lines.append("Dropped since last run: " + ", ".join(f"[dim]{t}[/dim]" for t in run.exits))
+    if change_lines:
+        console.print(
+            Panel("\n".join(change_lines), title="Changes", border_style="bright_blue")
+        )
+
+    # Portfolio summary
+    if run.portfolio_total_value:
+        console.print(
+            f"[dim]Portfolio value (CAD): ${run.portfolio_total_value:,.2f}[/dim]"
+        )
+
+    # Data coverage footer
+    n = len(run.scores)
+    if n:
+        sent = sum(1 for s in run.scores if "No news found" not in s.reasoning)
+        tech = sum(1 for s in run.scores if s.technical != 0.0)
+        ml = sum(1 for s in run.scores if s.ml_pred != 0.0)
+        ana = sum(1 for s in run.scores if "No analyst coverage" not in s.reasoning)
+        console.print(
+            f"[dim]Coverage: sentiment {sent}/{n} · technical {tech}/{n} · "
+            f"ML {ml}/{n} · analyst {ana}/{n} · anomalies "
+            f"{sum(s.anomaly_flag for s in run.scores)}[/dim]"
         )
 
     # Persist

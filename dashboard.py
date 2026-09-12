@@ -209,7 +209,10 @@ st.subheader(f"Conviction Scores — {selected_date_str}")
 
 day_df = pd.read_sql(
     text("""SELECT ts.ticker, ts.composite, ts.sentiment, ts.technical,
-              ts.ml_pred, ts.analyst, ts.anomaly_flag, ts.reasoning
+              ts.ml_pred, ts.analyst, ts.anomaly_flag, ts.price,
+              ts.day_change_pct, ts.top_headline, ts.analyst_breakdown,
+              ts.signal_agreement, ts.anomaly_detail, ts.portfolio_weight,
+              ts.recommendation, ts.reasoning
        FROM ticker_scores ts
        JOIN brief_runs br ON br.id = ts.run_id
        WHERE br.run_date = :d
@@ -217,6 +220,44 @@ day_df = pd.read_sql(
     engine,
     params={"d": selected_date_str},
 )
+
+# Delta vs the previous run (same day's table contains no history).
+prev_dates = [d for d in dates if d < selected_date]
+prev_date = prev_dates[-1] if prev_dates else None
+if prev_date is not None:
+    prev_date_str = prev_date.strftime("%Y-%m-%d") if hasattr(prev_date, "strftime") else str(prev_date)
+else:
+    prev_date_str = None
+
+prev_scores = {}
+if prev_date_str:
+    prev_df = pd.read_sql(
+        text("""SELECT ts.ticker, ts.composite
+         FROM ticker_scores ts
+         JOIN brief_runs br ON br.id = ts.run_id
+         WHERE br.run_date = :d"""),
+        engine,
+        params={"d": prev_date_str},
+    )
+    prev_scores = dict(zip(prev_df["ticker"], prev_df["composite"]))
+    day_df["score_delta"] = day_df["ticker"].map(lambda t: prev_scores.get(t, None))
+    day_df["score_delta"] = day_df.apply(
+        lambda r: round(r["composite"] - r["score_delta"], 1)
+        if r["score_delta"] is not None else None,
+        axis=1,
+    )
+    prev_ranks = {t: i for i, t in enumerate(
+        prev_df.sort_values("composite", ascending=False)["ticker"]
+    )}
+    day_df["rank_change"] = day_df.apply(
+        lambda r: prev_ranks[r["ticker"]] - r.name if r["ticker"] in prev_ranks else None,
+        axis=1,
+    )
+else:
+    day_df["score_delta"] = None
+    day_df["rank_change"] = None
+
+day_df = day_df.drop(columns=["rank_change"])
 
 
 def _color_composite(val):
@@ -228,16 +269,54 @@ def _color_composite(val):
         return "color: #f39c12"
 
 
-styled = day_df.style.map(_color_composite, subset=["composite"])
+def _color_delta(val):
+    if val is None or pd.isna(val):
+        return ""
+    if val > 0:
+        return "color: #2ecc71"
+    if val < 0:
+        return "color: #e74c3c"
+    return "color: #888"
+
+
+styled = (
+    day_df.style
+    .map(_color_composite, subset=["composite"])
+    .map(_color_delta, subset=["score_delta"])
+)
 st.dataframe(
     styled,
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
     column_config={
+        "ticker": st.column_config.TextColumn("Ticker", pinned="left"),
         "composite": st.column_config.NumberColumn(
             "Composite",
             format="%+.1f",
             help="Weighted average of the four factors (minus 25 if anomaly). ≥ +25 bullish, -25 to +25 neutral, ≤ -25 bearish.",
+        ),
+        "score_delta": st.column_config.NumberColumn(
+            "Δ vs prev",
+            format="%+.1f",
+            help=(
+                f"Change in composite since {prev_date_str}."
+                if prev_date_str else "Change in composite vs the previous run."
+            ),
+        ),
+        "price": st.column_config.NumberColumn(
+            "Price",
+            format="$%.2f",
+            help="Last close / live price captured with the run.",
+        ),
+        "day_change_pct": st.column_config.NumberColumn(
+            "Day %",
+            format="%+.2f%%",
+            help="Intraday change vs the previous close.",
+        ),
+        "portfolio_weight": st.column_config.NumberColumn(
+            "Pos %",
+            format="%.1f%%",
+            help="Share of total portfolio value this holding represents (CAD).",
         ),
         "sentiment": st.column_config.NumberColumn(
             "Sentiment",
@@ -263,8 +342,47 @@ st.dataframe(
             "Anomaly",
             help="Unusual price/volume vs its history. If flagged, 25 points were already subtracted from composite.",
         ),
+        "signal_agreement": st.column_config.TextColumn(
+            "Signal",
+            help="How much the four factors agree: High agreement / Moderate / Conflicted / Low coverage.",
+        ),
+        "recommendation": st.column_config.TextColumn(
+            "Action",
+            help="Rule-based nudge from conviction + position size. Not financial advice.",
+        ),
     },
 )
+
+if prev_date_str:
+    st.caption(f"Δ vs previous run **{prev_date_str}** — green = improved, red = worsened.")
+
+# ---------------------------------------------------------------------------
+# Score distribution + biggest movers
+# ---------------------------------------------------------------------------
+
+if not day_df.empty:
+    st.divider()
+    c1, c2 = st.columns(2)
+    with c1:
+        st.subheader("Score Distribution")
+        buckets = [float(b) for b in [-100, -75, -50, -25, 0, 25, 50, 75, 100]]
+        labels = [f"{b}+" for b in buckets[:-1]]
+        counts = pd.cut(day_df["composite"], bins=buckets, labels=labels, right=False).value_counts().reindex(labels, fill_value=0)
+        st.bar_chart(counts, height=240)
+    with c2:
+        st.subheader("Biggest Movers")
+        if prev_date_str and day_df["score_delta"].notna().any():
+            movers = day_df.dropna(subset=["score_delta"]).copy()
+            movers["abs_delta"] = movers["score_delta"].abs()
+            movers = movers.sort_values("abs_delta", ascending=False).head(5)
+            for _, r in movers.iterrows():
+                arrow = "🟢" if r["score_delta"] >= 0 else "🔴"
+                st.markdown(
+                    f"{arrow} **{r['ticker']}**: {r['composite']:+.1f} "
+                    f"({r['score_delta']:+.1f} vs {prev_date_str})"
+                )
+        else:
+            st.info("No previous run yet — movers appear once a second brief is persisted.")
 
 # ---------------------------------------------------------------------------
 # Ticker history: line chart
@@ -293,11 +411,26 @@ if not day_df.empty:
             height=350,
         )
 
-        # Show reasoning for the selected date
+        # Show reasoning + enrichment for the selected date
         row = day_df[day_df["ticker"] == selected_ticker]
-        if not row.empty and pd.notna(row.iloc[0].get("reasoning")):
-            with st.expander(f"Reasoning — {selected_ticker} on {selected_date_str}"):
-                st.markdown(row.iloc[0]["reasoning"].replace(" | ", "\n\n"))
+        if not row.empty:
+            r = row.iloc[0]
+            details = []
+            if pd.notna(r.get("top_headline")) and str(r["top_headline"]).strip():
+                details.append(f"**Top headline:** {r['top_headline']}")
+            if pd.notna(r.get("analyst_breakdown")) and str(r["analyst_breakdown"]).strip():
+                details.append(f"**Analyst breakdown:** {r['analyst_breakdown']}")
+            if pd.notna(r.get("signal_agreement")) and str(r["signal_agreement"]).strip():
+                details.append(f"**Signal agreement:** {r['signal_agreement']}")
+            if pd.notna(r.get("recommendation")) and str(r["recommendation"]).strip():
+                details.append(f"**Suggestion:** {r['recommendation']}")
+            if bool(r.get("anomaly_flag")) and pd.notna(r.get("anomaly_detail")) and str(r["anomaly_detail"]).strip():
+                details.append(f"**Anomaly detail:**\n\n{r['anomaly_detail']}")
+            if pd.notna(r.get("reasoning")) and str(r["reasoning"]).strip():
+                details.append(r["reasoning"].replace(" | ", "\n\n"))
+            if details:
+                with st.expander(f"Details — {selected_ticker} on {selected_date_str}"):
+                    st.markdown("\n\n".join(details))
 
     # Score breakdown bar chart
     if not hist_df.empty:
@@ -313,13 +446,22 @@ if not day_df.empty:
 
 if not day_df.empty:
     st.divider()
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     col1.metric("Tickers Scored", len(day_df))
     col2.metric("Avg Composite", f"{day_df['composite'].mean():+.1f}")
     col3.metric("Anomalies", int(day_df["anomaly_flag"].sum()))
-    bullish = (day_df["composite"] >= 25).sum()
-    bearish = (day_df["composite"] <= -25).sum()
+    bullish = int((day_df["composite"] >= 25).sum())
+    bearish = int((day_df["composite"] <= -25).sum())
     col4.metric("Bullish / Bearish", f"{bullish} / {bearish}")
+    if "score_delta" in day_df and day_df["score_delta"].notna().any():
+        avg_delta = day_df["score_delta"].mean()
+        up = int((day_df["score_delta"] > 0).sum())
+        down = int((day_df["score_delta"] < 0).sum())
+        col5.metric(f"Δ vs {prev_date_str}", f"{avg_delta:+.1f}")
+        col6.metric("Up / Down", f"{up} / {down}")
+    else:
+        col5.metric("Δ vs prev", "—")
+        col6.metric("Up / Down", "—")
     st.caption(
         "Bullish ≥ +25 / Bearish ≤ -25 on the composite — which already includes "
         "the -25 anomaly penalty where flagged."

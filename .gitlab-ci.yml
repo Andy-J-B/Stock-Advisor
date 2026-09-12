@@ -1,37 +1,21 @@
-stages: [test, brief]
+stages: [dispatch]
 
-image: python:3.12
-
-cache:
-  key: pip
-  paths:
-    - .cache/pip
-
-lint-and-test:
-  stage: test
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "schedule"'
-      when: never
-    - when: always
-  script:
-    - python -m pip install --upgrade pip
-    - pip install -r requirements.txt
-    - pip install ruff pytest pytest-cov
-    - mkdir -p data
-    - ruff check .
-    - pytest tests/ -q --cov=src --cov=tests --cov-report=term
-
-nightly-brief:
-  stage: brief
+nightly-brief-dispatch:
+  stage: dispatch
+  image: curlimages/curl:latest
   rules:
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
   script:
-    - pip install -r requirements.txt
-    - python main.py brief --persist --notify
+    - |
+      curl --fail-with-body -s -X POST -w "\ndispatch HTTP %{http_code}\n" \
+        -H "Accept: application/vnd.github+json" \
+        -H "Authorization: Bearer $GITHUB_DISPATCH_TOKEN" \
+        -d '{"event_type":"nightly-brief"}' \
+        https://api.github.com/repos/Andy-J-B/Stock-Advisor/dispatches
   after_script:
     - |
       if [ "$CI_JOB_STATUS" = "failed" ]; then
         curl -s -X POST -H "Content-Type: application/json" \
-          -d '{"content":"Nightly brief failed — check GitLab job log"}' \
+          -d '{"content":"Nightly brief dispatch to GitHub failed — check GitLab job log"}' \
           "$NOTIFY_WEBHOOK_URL" || true
       fi

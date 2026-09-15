@@ -1,6 +1,8 @@
 name: Nightly Brief
 
 on:
+  schedule:
+    - cron: "53 19 * * 1-5" # 14:53 PDT (21:53 UTC) — weekdays only
   repository_dispatch:
     types: [nightly-brief]
   workflow_dispatch: {} # manual trigger for testing

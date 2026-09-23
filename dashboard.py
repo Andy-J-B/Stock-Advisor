@@ -26,6 +26,13 @@ _WEIGHT_LABELS = {
     "analyst": "Analyst (street consensus)",
 }
 
+
+def _bollinger_bands(series, window: int = 20, k: float = 2.0):
+    """Rolling mean / standard-deviation bands around a time series."""
+    mid = series.rolling(window).mean()
+    std = series.rolling(window).std()
+    return mid, mid + k * std, mid - k * std
+
 # ---------------------------------------------------------------------------
 # Database connection
 # ---------------------------------------------------------------------------
@@ -200,6 +207,138 @@ if not market_df.empty:
                     st.markdown(f"**{title}** — {pub}  \n{link}")
                 else:
                     st.markdown(f"**{title}** — {pub}")
+
+# ---------------------------------------------------------------------------
+# Portfolio — daily snapshots (CAD): overall net worth, allocation, per stock
+# ---------------------------------------------------------------------------
+
+st.divider()
+st.subheader("Portfolio — Daily Snapshots (CAD)")
+
+try:
+    snapshots_df = pd.read_sql(
+        text("""SELECT ps.run_date, ps.net_worth_cad, ps.invested_cad, ps.cash_cad,
+                       ps.cost_cad, ps.day_change_cad, ps.return_pct,
+                       ps.all_time_pct, ps.fx_usd_cad
+                FROM portfolio_snapshots ps
+                ORDER BY ps.run_date"""),
+        engine,
+    )
+    items_df = pd.read_sql(
+        text("""SELECT ps.run_date, psi.ticker, psi.account, psi.value_cad,
+                       psi.price, psi.shares, psi.avg_price
+                FROM portfolio_snapshot_items psi
+                JOIN portfolio_snapshots ps ON ps.id = psi.snapshot_id
+                ORDER BY ps.run_date, psi.value_cad DESC"""),
+        engine,
+    )
+except Exception:
+    snapshots_df = pd.DataFrame()
+    items_df = pd.DataFrame()
+
+if snapshots_df.empty:
+    st.info(
+        "No portfolio snapshots yet — run `python main.py brief --persist` and "
+        "the daily snapshot history will appear here (one row per date)."
+    )
+else:
+    latest = snapshots_df.iloc[-1]
+    m_cols = st.columns(5)
+    m_cols[0].metric("Net Worth", f"${latest['net_worth_cad']:,.2f}")
+    m_cols[1].metric("Invested", f"${latest['invested_cad']:,.2f}")
+    m_cols[2].metric("Cash", f"${latest['cash_cad']:,.2f}")
+    m_cols[3].metric("Day Change", f"${latest['day_change_cad']:+,.2f}")
+    m_cols[4].metric("All-Time", f"{latest['all_time_pct']:+.2f}%")
+
+    # A single daily snapshot is not enough to show a trend.
+    has_history = len(snapshots_df) > 1
+
+    tab_overall, tab_alloc, tab_stock = st.tabs(
+        ["Net worth & bands", "Allocation over time", "Per stock"]
+    )
+
+    overall = snapshots_df.set_index("run_date")
+
+    with tab_overall:
+        if not has_history:
+            st.info("More than one date of snapshots is needed to chart a trend.")
+        chart_col, ctrl_col = st.columns([4, 1])
+        with ctrl_col:
+            show_bb = st.toggle("Bollinger bands", value=True)
+            bb_window = st.slider("BB window (days)", 5, 60, 20,
+                                  disabled=not has_history)
+            bb_k = st.slider("BB ± std", 1.0, 3.0, 2.0, 0.5,
+                             disabled=not has_history)
+        chart = overall[["net_worth_cad", "invested_cad", "cash_cad"]]
+        if show_bb and has_history:
+            mid, upper, lower = _bollinger_bands(
+                overall["net_worth_cad"], window=bb_window, k=bb_k
+            )
+            chart = chart.join(
+                pd.DataFrame(
+                    {"bb_upper": upper, "bb_mid": mid, "bb_lower": lower},
+                    index=overall.index,
+                )
+            )
+        st.line_chart(chart, height=380)
+        if show_bb and has_history:
+            st.caption(
+                f"Bollinger bands ({bb_window}-day rolling mean ± {bb_k:g}σ) on "
+                "net worth. Adjust the controls to taste."
+            )
+
+    with tab_alloc:
+        if not items_df.empty and has_history:
+            alloc = items_df.pivot_table(
+                index="run_date", columns="ticker", values="value_cad"
+            ).fillna(0.0)
+            st.area_chart(alloc, height=320)
+            st.caption("Position values per day (CAD). Sold positions drop out "
+                       "of the snapshot set once removed.")
+        else:
+            st.info("Allocation history appears once multiple daily snapshots exist.")
+
+    with tab_stock:
+        if items_df.empty:
+            st.info("No position data yet.")
+        else:
+            tickers_sorted = sorted(items_df["ticker"].unique().tolist())
+            selected = st.selectbox("Stock", tickers_sorted)
+            stock = items_df[items_df["ticker"] == selected].set_index("run_date")
+            if has_history:
+                st.subheader(f"{selected} — Position Value (CAD)")
+                st.line_chart(stock["value_cad"], height=260)
+                st.subheader(f"{selected} — Price (CAD)")
+                price_col, price_ctrl = st.columns([4, 1])
+                with price_ctrl:
+                    show_p_bb = st.toggle("Bollinger", value=True,
+                                          key="price_bb")
+                    p_window = st.slider("BB window", 5, 60, 20,
+                                         key="price_bb_w")
+                    p_k = st.slider("BB ± std", 1.0, 3.0, 2.0, 0.5,
+                                    key="price_bb_k")
+                price_chart = stock[["price"]].rename(
+                    columns={"price": selected}
+                )
+                if show_p_bb:
+                    mid, upper, lower = _bollinger_bands(
+                        stock["price"], window=p_window, k=p_k
+                    )
+                    price_chart = price_chart.join(
+                        pd.DataFrame(
+                            {"bb_upper": upper, "bb_mid": mid, "bb_lower": lower},
+                            index=stock.index,
+                        )
+                    )
+                st.line_chart(price_chart, height=300)
+            else:
+                st.metric(
+                    "Latest",
+                    f"{selected}: ${stock['price'].iloc[-1]:,.2f}"
+                    f" × {stock['shares'].iloc[-1]:g} sh "
+                    f"= ${stock['value_cad'].iloc[-1]:,.2f}",
+                )
+                st.info("Price/value trends appear once multiple daily snapshots exist.")
 
 # ---------------------------------------------------------------------------
 # Day view: conviction scores table

@@ -359,7 +359,7 @@ class _CapClient:
 
     def post(self, url, json=None, headers=None):
         self.calls.append(("post", url, json))
-        if "on_conflict=run_id" in url and "portfolio_snapshots" in url:
+        if "on_conflict=run_date" in url and "portfolio_snapshots" in url:
             return _CapResp([{"id": 7}])
         return _CapResp([])
 
@@ -399,9 +399,10 @@ def test_persist_portfolio_snapshot_payloads():
         client, "https://db.example/rest/v1", {"apikey": "k"}, 5, run, _fake_snap()
     )
     posts = [c for c in client.calls if c[0] == "post"]
+    deletes = [c for c in client.calls if c[0] == "delete"]
 
-    # Affected tables: snapshots upsert + one items batch.
-    assert posts[0][1].endswith("/portfolio_snapshots?on_conflict=run_id")
+    # Snapshot upserts by run_date (one entry per day, overwritten in place).
+    assert posts[0][1].endswith("/portfolio_snapshots?on_conflict=run_date")
     assert posts[0][2]["run_id"] == 5
     assert posts[0][2]["net_worth_cad"] == 60000.0
     assert posts[1][1].endswith("/portfolio_snapshot_items?on_conflict=snapshot_id,account,ticker")
@@ -409,6 +410,12 @@ def test_persist_portfolio_snapshot_payloads():
     assert len(items) == 2
     assert items[0]["snapshot_id"] == 7 and items[0]["ticker"] == "MU.NE"
     assert items[0]["day_change_cad"] == 110.0 and items[0]["value_cad"] == 4500.0
+
+    # Stale items pruned so a same-day overwrite never leaves old positions.
+    assert any(
+        "snapshot_id=eq.7&ticker=not.in.(MU.NE,MSFT.NE)" in url
+        for _, url, _ in deletes
+    )
 
 
 def test_upsert_holdings_prunes_sold(monkeypatch, memory_db):
@@ -435,6 +442,59 @@ def test_upsert_holdings_prunes_sold(monkeypatch, memory_db):
     # Keeps MU.NE, prunes the stale VINTAGE.TO (and wipes the empty USD account).
     assert any("not.in.(MU.NE)" in u for u in deleted_urls)
     assert any("account=eq.USD" in u and "not.in" not in u for u in deleted_urls)
+
+
+def test_remote_derived_snapshot_rebuilds(monkeypatch):
+    """CI path: no local holdings, rebuild the snapshot from remote tables."""
+    from src import brief as b
+
+    class Rec:
+        def __init__(self, json):
+            self._json = json
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._json
+
+    def fake_get(url, headers=None):
+        if "/portfolio_accounts?select=" in url:
+            return Rec([{"account": "CAD", "cash": 5000.0, "initial_cash": 10000.0},
+                        {"account": "USD", "cash": 1000.0, "initial_cash": 2000.0}])
+        return Rec([{"account": "CAD", "ticker": "MU.NE", "shares": 100, "avg_price": 40.0}])
+
+    class FakeClient:
+        def get(self, url, headers=None):
+            return fake_get(url, headers)
+
+    monkeypatch.setattr(b.data_client, "get_usd_to_cad", lambda: 1.35)
+    monkeypatch.setattr(b.data_client, "get_current_prices_batch",
+                        lambda tks: {"MU.NE": (45.0, 43.5)})
+    snap = b._remote_derived_snapshot(FakeClient(), "https://db.example/rest/v1", {})
+    assert snap is not None
+    assert snap["rows"][0]["ticker"] == "MU.NE"
+    assert snap["rows"][0]["value_cad"] == 4500.0
+    assert snap["cash"] == pytest.approx(5000.0 + 1000.0 * 1.35)
+    assert snap["net_worth"] == pytest.approx(4500.0 + 5000.0 + 1350.0)
+    assert snap["all_time_cad"] == pytest.approx(snap["net_worth"] - 10000.0 - 2000.0 * 1.35)
+
+
+def test_remote_derived_snapshot_none_when_empty(monkeypatch):
+    from src import brief as b
+
+    class Rec:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return []
+
+    class FakeClient:
+        def get(self, url, headers=None):
+            return Rec()
+
+    assert b._remote_derived_snapshot(FakeClient(), "https://db.example/rest/v1", {}) is None
 
 
 def test_fetch_remote_portfolio_snapshot_mapping(monkeypatch):

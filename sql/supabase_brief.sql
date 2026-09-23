@@ -67,7 +67,20 @@ create table if not exists market_overview (
 -- This replaces the original single JSONB-blob `portfolio_snapshots` design
 -- (dropped below) with a queryable relational schema.
 
-drop table if exists portfolio_snapshots cascade;
+-- One-time migration: drop only the *legacy* JSONB portfolio_snapshots table
+-- (it had a `data` jsonb column). Once the normalized schema is in place no
+-- snapshot history is ever wiped by re-running this file.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'portfolio_snapshots'
+      and column_name = 'data'
+  ) then
+    drop table portfolio_snapshots cascade;
+  end if;
+end $$;
 
 -- Make this file re-runnable: clear every existing policy in public so the
 -- create policy statements below can be re-applied fresh.
@@ -93,6 +106,17 @@ create table if not exists portfolio_holdings (
     unique (account, ticker)
 );
 create index if not exists idx_portfolio_holdings_ticker on portfolio_holdings (ticker);
+
+-- Account cash/initial balances (in the account's native currency, mirroring
+-- the local Account table) — lets a CI brief rebuild the exact net worth even
+-- for accounts with no positions.
+create table if not exists portfolio_accounts (
+    id            bigserial primary key,
+    account       text not null unique,
+    cash          numeric not null default 0,
+    initial_cash  numeric not null default 0,
+    updated_at    timestamptz not null default now()
+);
 
 create table if not exists portfolio_snapshots (
     id             bigserial primary key,
@@ -129,6 +153,22 @@ create table if not exists portfolio_snapshot_items (
 );
 create index if not exists idx_snapshot_items_ticker on portfolio_snapshot_items (ticker);
 
+-- Heal migrations: if a previous destructive run dropped the parent table via
+-- CASCADE, the items/unique FK constraints can be missing. Re-create them so
+-- PostgREST upserts and cascades keep working.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    where t.relname = 'portfolio_snapshot_items' and c.contype = 'f'
+  ) then
+    alter table portfolio_snapshot_items
+      add constraint portfolio_snapshot_items_snapshot_id_fkey
+      foreign key (snapshot_id) references portfolio_snapshots(id) on delete cascade;
+  end if;
+end $$;
+
 -- Row-level security: the anon key (used by both the nightly `brief --persist`
 -- in CI and the read-only Streamlit dashboard) needs select + write access.
 alter table brief_runs         enable row level security;
@@ -138,6 +178,7 @@ alter table market_overview    enable row level security;
 alter table portfolio_snapshots      enable row level security;
 alter table portfolio_snapshot_items enable row level security;
 alter table portfolio_holdings        enable row level security;
+alter table portfolio_accounts        enable row level security;
 
 create policy "allow read" on brief_runs            for select using (true);
 create policy "allow read" on ticker_scores         for select using (true);
@@ -146,6 +187,7 @@ create policy "allow read" on market_overview       for select using (true);
 create policy "allow read" on portfolio_snapshots        for select using (true);
 create policy "allow read" on portfolio_snapshot_items   for select using (true);
 create policy "allow read" on portfolio_holdings          for select using (true);
+create policy "allow read" on portfolio_accounts          for select using (true);
 
 create policy "allow write" on brief_runs
     for insert with check (true);
@@ -186,4 +228,11 @@ create policy "allow write" on portfolio_holdings
 create policy "allow update" on portfolio_holdings
     for update using (true) with check (true);
 create policy "allow delete" on portfolio_holdings
+    for delete using (true);
+
+create policy "allow write" on portfolio_accounts
+    for insert with check (true);
+create policy "allow update" on portfolio_accounts
+    for update using (true) with check (true);
+create policy "allow delete" on portfolio_accounts
     for delete using (true);

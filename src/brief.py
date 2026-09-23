@@ -689,6 +689,7 @@ _SUPABASE_TABLE_MARKET = "market_overview"
 _SUPABASE_TABLE_PORTFOLIO = "portfolio_snapshots"
 _SUPABASE_TABLE_PORTFOLIO_ITEMS = "portfolio_snapshot_items"
 _SUPABASE_TABLE_HOLDINGS = "portfolio_holdings"
+_SUPABASE_TABLE_ACCOUNTS = "portfolio_accounts"
 
 
 def _supabase_rest_config() -> tuple[str, str]:
@@ -945,10 +946,12 @@ def persist_to_supabase(run: BriefRun) -> bool:
             # Persist the live portfolio snapshot as normalized rows so CI /
             # newsletter jobs can render portfolio status without a local DB.
             # Best-effort: failures here never fail the brief persist itself.
+            # A snapshot is always written: on a machine with the local DB the
+            # live local snapshot wins; in CI (empty local DB) it is rebuilt
+            # from the remote portfolio tables + live prices, then upserted.
             try:
-                from src import portfolio
-                snap = portfolio.snapshot()
-                if snap["rows"] or snap["cash"] or snap["invested"]:
+                snap = _load_portfolio_snapshot(client, rest_url, headers)
+                if snap is not None:
                     _persist_portfolio_snapshot(client, rest_url, headers, run_id, run, snap)
             except Exception as exc:
                 log.warning("Could not persist portfolio snapshot: %s", exc)
@@ -970,8 +973,118 @@ def _persist_portfolio_snapshot(client, rest_url, headers, run_id, run, snap: di
     _upsert_portfolio_holdings(client, rest_url, headers, snap)
 
 
+def _load_portfolio_snapshot(client, rest_url, headers) -> dict | None:
+    """Snapshot to persist: live local one when holdings exist, else rebuild
+    from the remote portfolio tables + live prices (the CI path)."""
+    try:
+        from src import portfolio
+        snap = portfolio.snapshot()
+    except Exception:
+        snap = None
+    if snap and (snap["rows"] or snap["cash"] or snap["invested"]):
+        return snap
+    try:
+        return _remote_derived_snapshot(client, rest_url, headers)
+    except Exception as exc:
+        log.warning("Could not rebuild portfolio snapshot from Supabase: %s", exc)
+        return None
+
+
+def _remote_derived_snapshot(client, rest_url, headers) -> dict | None:
+    """Rebuild the current portfolio snapshot from the remote tables.
+
+    Used by CI (no local DB): pulls ``portfolio_accounts`` (cash + initial
+    balances) and ``portfolio_holdings`` (shares + cost basis) synced by a
+    local ``--persist``, fetches live prices, and computes the same dict shape
+    as ``portfolio.snapshot()``. Returns None when nothing is mirrored yet.
+    """
+    from src import data_client
+
+    resp = client.get(
+        f"{rest_url}/{_SUPABASE_TABLE_ACCOUNTS}?select=account,cash,initial_cash",
+        headers=headers,
+    )
+    resp.raise_for_status()
+    accounts = resp.json()
+    resp = client.get(
+        f"{rest_url}/{_SUPABASE_TABLE_HOLDINGS}"
+        "?select=account,ticker,shares,avg_price",
+        headers=headers,
+    )
+    resp.raise_for_status()
+    holdings = resp.json()
+    if not accounts and not holdings:
+        return None
+
+    fx = data_client.get_usd_to_cad()
+    prices = data_client.get_current_prices_batch(
+        [h["ticker"] for h in holdings]
+    )
+
+    grand = {"value": 0.0, "cost": 0.0, "cash": 0.0, "initial": 0.0, "day_chg": 0.0}
+    rows: list[dict] = []
+    for h in holdings:
+        acc = h["account"]
+        multiplier = fx if acc == "USD" else 1.0
+        live, prev = prices.get(h["ticker"], (0.0, 0.0))
+        cost = float(h["shares"]) * float(h["avg_price"])
+        value = float(h["shares"]) * live if live else cost
+        day_chg = (live - prev) * float(h["shares"]) if prev else 0.0
+        ret = value - cost
+        rows.append(
+            {
+                "ticker": h["ticker"],
+                "account": acc,
+                "shares": float(h["shares"]),
+                "avg_price": float(h["avg_price"]),
+                "price": live,
+                "day_pct": ((live - prev) / prev * 100) if (prev and live) else 0.0,
+                "day_chg_cad": day_chg * multiplier,
+                "value_cad": value * multiplier,
+                "return_pct": (ret / cost * 100) if cost else 0.0,
+                "return_cad": ret * multiplier,
+            }
+        )
+        grand["value"] += value * multiplier
+        grand["cost"] += cost * multiplier
+        grand["day_chg"] += day_chg * multiplier
+
+    for a in accounts:
+        multiplier = fx if a["account"] == "USD" else 1.0
+        grand["cash"] += float(a["cash"]) * multiplier
+        grand["initial"] += float(a["initial_cash"]) * multiplier
+
+    net_worth = grand["value"] + grand["cash"]
+    if not (rows or grand["cash"]):
+        return None
+    return {
+        "rows": sorted(rows, key=lambda r: r["value_cad"], reverse=True),
+        "net_worth": net_worth,
+        "invested": grand["value"],
+        "cash": grand["cash"],
+        "cost": grand["cost"],
+        "day_chg": grand["day_chg"],
+        "day_pct": (grand["day_chg"] / (grand["value"] - grand["day_chg"]) * 100)
+        if (grand["value"] - grand["day_chg"]) > 0
+        else 0.0,
+        "return_pct": (grand["value"] - grand["cost"]) / grand["cost"] * 100
+        if grand["cost"]
+        else 0.0,
+        "return_cad": grand["value"] - grand["cost"],
+        "all_time_pct": (net_worth - grand["initial"]) / grand["initial"] * 100
+        if grand["initial"]
+        else 0.0,
+        "all_time_cad": net_worth - grand["initial"],
+        "fx_usd_cad": fx,
+    }
+
+
 def _upsert_portfolio_snapshot_row(client, rest_url, headers, run_id, run, snap: dict) -> None:
-    """Upsert the aggregate snapshot row, then its per-holding items."""
+    """Upsert the aggregate snapshot row (one per run_date), then its items.
+
+    Same-day re-runs overwrite the existing row instead of creating a second
+    entry; items are upserted and stale tickers pruned to match the new set.
+    """
     payload = {
         "run_id": run_id,
         "run_date": run.run_date.isoformat(),
@@ -988,10 +1101,10 @@ def _upsert_portfolio_snapshot_row(client, rest_url, headers, run_id, run, snap:
         "fx_usd_cad": snap["fx_usd_cad"],
         "generated_at": run.generated_at.isoformat(),
     }
-    # return=representation gives us the row back so we can grab the id for
-    # the child items (works on both insert and upsert-update paths).
+    # One row per run_date: re-running the same day (local or CI) updates the
+    # row in place (same id) rather than inserting a duplicate.
     resp = client.post(
-        f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO}?on_conflict=run_id",
+        f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO}?on_conflict=run_date",
         json=payload,
         headers={
             **headers,
@@ -1032,9 +1145,23 @@ def _upsert_portfolio_snapshot_row(client, rest_url, headers, run_id, run, snap:
         )
         resp.raise_for_status()
 
+    # Prune items from this snapshot that are no longer held, so a same-day
+    # overwrite never leaves stale positions behind. Note: the in-list must be
+    # comma-joined, unquoted and free of whitespace — PostgREST parses quoted
+    # or space-padded in()/not.in() values incorrectly (each element would
+    # silently fail to match and get deleted).
+    kept = ",".join(r["ticker"] for r in snap["rows"])
+    if kept:
+        resp = client.delete(
+            f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO_ITEMS}"
+            f"?snapshot_id=eq.{snap_id}&ticker=not.in.({kept})",
+            headers=headers,
+        )
+        resp.raise_for_status()
+
 
 def _upsert_portfolio_holdings(client, rest_url, headers, snap: dict) -> None:
-    """Mirror current positions (portfolio of record) and prune sold ones."""
+    """Mirror current accounts + positions (portfolio of record) and prune stale."""
     from src.database import init_db, Account
 
     init_db()
@@ -1043,11 +1170,24 @@ def _upsert_portfolio_holdings(client, rest_url, headers, snap: dict) -> None:
         for acc in Account.select()
         for h in acc.holdings
     ]
+    accounts = [
+        {"account": acc.name, "cash": acc.cash, "initial_cash": acc.initial_cash}
+        for acc in Account.select()
+    ]
 
     for i in range(0, len(local), 50):
         batch = local[i : i + 50]
         resp = client.post(
             f"{rest_url}/{_SUPABASE_TABLE_HOLDINGS}?on_conflict=account,ticker",
+            json=batch,
+            headers=headers,
+        )
+        resp.raise_for_status()
+
+    for i in range(0, len(accounts), 50):
+        batch = accounts[i : i + 50]
+        resp = client.post(
+            f"{rest_url}/{_SUPABASE_TABLE_ACCOUNTS}?on_conflict=account",
             json=batch,
             headers=headers,
         )
@@ -1066,6 +1206,20 @@ def _upsert_portfolio_holdings(client, rest_url, headers, snap: dict) -> None:
         if kept:
             query += f"&ticker=not.in.({','.join(kept)})"
         resp = client.delete(query, headers=headers)
+        resp.raise_for_status()
+
+    # Remove accounts that no longer exist locally.
+    resp = client.get(
+        f"{rest_url}/{_SUPABASE_TABLE_ACCOUNTS}?select=account", headers=headers
+    )
+    resp.raise_for_status()
+    remote_acc_names = {r.get("account") for r in resp.json()}
+    local_acc_names = {a["account"] for a in accounts}
+    for acc_ in sorted(remote_acc_names - local_acc_names):
+        resp = client.delete(
+            f"{rest_url}/{_SUPABASE_TABLE_ACCOUNTS}?account=eq.{acc_}",
+            headers=headers,
+        )
         resp.raise_for_status()
 
 

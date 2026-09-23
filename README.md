@@ -197,12 +197,13 @@ python main.py brief-weights --sentiment 0.30 --ml 0.30
    - `market_overview` — one row per `run_date` (indices + top news snapshot)
    - `watchlist` — the current watchlist, synced after any change and after a `--persist`
    - Portfolio (normalized, mirroring the local SQLite DB):
-     - `portfolio_snapshots` — one immutable aggregate row per run (`run_id`,
-       `run_date`, all metrics in CAD, `generated_at`)
+     - `portfolio_snapshots` — one aggregate row per `run_date` (all metrics in CAD); re-running the same day overwrites it in place instead of adding a second entry
      - `portfolio_snapshot_items` — per-holding breakdown of each snapshot
        (`ticker`, `account`, `shares`, `avg_price`, `price`, day/return deltas)
      - `portfolio_holdings` — current positions (portfolio of record), kept in
-       sync and pruned on every persist so CI jobs see the live portfolio
+       sync and pruned on every persist
+     - `portfolio_accounts` — per-account `cash`/`initial_cash`, so a CI brief
+       (no local DB) can rebuild the exact net worth
 4. `python main.py brief --notify` posts the score summary **plus the market recap** to your webhook.
 
 ### Automated nightly runs
@@ -320,6 +321,6 @@ Fetches S&P 500 / TSX 60 constituents from Wikipedia (cached 7d). Ranks by analy
 .venv/bin/python -m pytest tests/ -v
 ```
 
-253 tests across 17 files: cache, database, portfolio, indicators, risk, optimizer, sentiment, features, ML model, anomaly detection, screener, brief (scores, market overview, enrichment + recommendations), newsletter (render, exec summary, fundamentals, recipients, SMTP, preview), Canadian-to-US ticker mapping, and CLI helpers.
+255 tests across 17 files: cache, database, portfolio, indicators, risk, optimizer, sentiment, features, ML model, anomaly detection, screener, brief (scores, market overview, enrichment + recommendations), newsletter (render, exec summary, fundamentals, recipients, SMTP, preview), Canadian-to-US ticker mapping, and CLI helpers.
 
 CI: ruff lint + pytest with coverage (Python 3.12). `run_brief()` is headless-safe under CI/non-TTY (default risk allocation instead of the interactive setup prompt).

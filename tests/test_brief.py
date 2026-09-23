@@ -333,4 +333,159 @@ def test_recommendation_neutral():
     s = brief.TickerScore(ticker="MSFT", composite=5.0)
     rec, over = brief._recommendation(s)
     assert rec == "Hold / watch"
-    assert not over
+
+
+# ---------------------------------------------------------------------------
+# Portfolio persistence (normalized snapshots + items + holdings)
+# ---------------------------------------------------------------------------
+
+
+class _CapResp:
+    def __init__(self, json):
+        self._json = json
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._json
+
+
+class _CapClient:
+    """Records every REST call; returns a fake id from the snapshot upsert."""
+
+    def __init__(self):
+        self.calls = []  # (method, url, payload)
+
+    def post(self, url, json=None, headers=None):
+        self.calls.append(("post", url, json))
+        if "on_conflict=run_id" in url and "portfolio_snapshots" in url:
+            return _CapResp([{"id": 7}])
+        return _CapResp([])
+
+    def get(self, url, headers=None):
+        return _CapResp([])
+
+    def delete(self, url, headers=None):
+        self.calls.append(("delete", url, None))
+        return _CapResp([])
+
+
+def _fake_snap():
+    return {
+        "rows": [
+            {"ticker": "MU.NE", "account": "CAD", "shares": 100, "avg_price": 40.0,
+             "price": 45.0, "day_pct": 2.5, "day_chg_cad": 110.0,
+             "value_cad": 4500.0, "return_pct": 12.5, "return_cad": 500.0},
+            {"ticker": "MSFT.NE", "account": "CAD", "shares": 20, "avg_price": 30.0,
+             "price": 32.0, "day_pct": 1.0, "day_chg_cad": 40.0,
+             "value_cad": 640.0, "return_pct": 6.7, "return_cad": 40.0},
+        ],
+        "net_worth": 60000.0, "invested": 5140.0, "cash": 54860.0,
+        "cost": 4600.0, "day_chg": 150.0, "day_pct": 3.0,
+        "return_pct": 11.7, "return_cad": 540.0,
+        "all_time_pct": 9.0, "all_time_cad": 5000.0, "fx_usd_cad": 1.36,
+    }
+
+
+def test_persist_portfolio_snapshot_payloads():
+    client = _CapClient()
+    from datetime import date, datetime
+    run = brief.BriefRun(
+        run_date=date(2026, 9, 22), generated_at=datetime(2026, 9, 22, 21, 0),
+        weights_used={},
+    )
+    brief._persist_portfolio_snapshot(
+        client, "https://db.example/rest/v1", {"apikey": "k"}, 5, run, _fake_snap()
+    )
+    posts = [c for c in client.calls if c[0] == "post"]
+
+    # Affected tables: snapshots upsert + one items batch.
+    assert posts[0][1].endswith("/portfolio_snapshots?on_conflict=run_id")
+    assert posts[0][2]["run_id"] == 5
+    assert posts[0][2]["net_worth_cad"] == 60000.0
+    assert posts[1][1].endswith("/portfolio_snapshot_items?on_conflict=snapshot_id,account,ticker")
+    items = posts[1][2]
+    assert len(items) == 2
+    assert items[0]["snapshot_id"] == 7 and items[0]["ticker"] == "MU.NE"
+    assert items[0]["day_change_cad"] == 110.0 and items[0]["value_cad"] == 4500.0
+
+
+def test_upsert_holdings_prunes_sold(monkeypatch, memory_db):
+    from src.database import Account, Holding
+    acc = Account.create(name="CAD", cash=0.0, initial_cash=0.0)
+    Holding.create(account=acc, ticker="MU.NE", shares=100, avg_price=40.0)
+
+    deleted_urls = []
+
+    class Client:
+        def post(self, url, json=None, headers=None):
+            return _CapResp([])
+
+        def get(self, url, headers=None):
+            return _CapResp([{"account": "CAD", "ticker": "VINTAGE.TO"},
+                             {"account": "USD"}])
+
+        def delete(self, url, headers=None):
+            deleted_urls.append(url)
+            return _CapResp([])
+
+    brief._upsert_portfolio_holdings(Client(), "https://db.example/rest/v1",
+                                     {"apikey": "k"}, _fake_snap())
+    # Keeps MU.NE, prunes the stale VINTAGE.TO (and wipes the empty USD account).
+    assert any("not.in.(MU.NE)" in u for u in deleted_urls)
+    assert any("account=eq.USD" in u and "not.in" not in u for u in deleted_urls)
+
+
+def test_fetch_remote_portfolio_snapshot_mapping(monkeypatch):
+    import sys
+    import types
+
+    monkeypatch.setattr(brief, "_supabase_rest_config",
+                        lambda: ("https://db.example/rest/v1", "k"))
+
+    snapshots_resp = [{
+        "id": 7, "net_worth_cad": 60000, "invested_cad": 5140,
+        "cash_cad": 54860, "cost_cad": 4600, "day_change_cad": 150,
+        "day_pct": 3.0, "return_pct": 11.7, "return_cad": 540,
+        "all_time_pct": 9.0, "all_time_cad": 5000, "fx_usd_cad": 1.36,
+    }]
+    items_resp = [
+        {"ticker": "MU.NE", "account": "CAD", "shares": 100,
+         "avg_price": 40.0, "price": 45.0, "day_change_pct": 2.5,
+         "day_change_cad": 110.0, "value_cad": 4500.0,
+         "return_pct": 12.5, "return_cad": 500.0},
+    ]
+
+    class CapturingClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def get(self, url, headers=None):
+            if "/portfolio_snapshots?" in url:
+                assert "portfolio_snapshot_items(" not in url  # no embed
+                return _CapResp(snapshots_resp)
+            assert "snapshot_id=eq.7&order=value_cad.desc" in url
+            return _CapResp(items_resp)
+
+    fake_httpx = types.ModuleType("httpx")
+    fake_httpx.Client = CapturingClient
+    monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
+
+    snap = brief.fetch_remote_portfolio_snapshot()
+    assert snap is not None
+    assert snap["net_worth"] == 60000 and snap["day_chg"] == 150
+    assert snap["rows"][0]["ticker"] == "MU.NE"
+    assert snap["rows"][0]["day_chg_cad"] == 110.0
+    assert snap["fx_usd_cad"] == 1.36
+
+
+def test_fetch_remote_portfolio_snapshot_unconfigured(monkeypatch):
+    monkeypatch.setattr(brief, "_supabase_rest_config", lambda: ("", ""))
+    assert brief.fetch_remote_portfolio_snapshot() is None

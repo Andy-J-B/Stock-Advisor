@@ -687,6 +687,8 @@ _SUPABASE_TABLE_SCORES = "ticker_scores"
 _SUPABASE_TABLE_WATCHLIST = "watchlist"
 _SUPABASE_TABLE_MARKET = "market_overview"
 _SUPABASE_TABLE_PORTFOLIO = "portfolio_snapshots"
+_SUPABASE_TABLE_PORTFOLIO_ITEMS = "portfolio_snapshot_items"
+_SUPABASE_TABLE_HOLDINGS = "portfolio_holdings"
 
 
 def _supabase_rest_config() -> tuple[str, str]:
@@ -940,23 +942,14 @@ def persist_to_supabase(run: BriefRun) -> bool:
                 )
                 resp.raise_for_status()
 
-            # Upsert a live portfolio snapshot so CI/newsletter jobs can render
-            # portfolio status without a local database (best-effort).
+            # Persist the live portfolio snapshot as normalized rows so CI /
+            # newsletter jobs can render portfolio status without a local DB.
+            # Best-effort: failures here never fail the brief persist itself.
             try:
                 from src import portfolio
                 snap = portfolio.snapshot()
                 if snap["rows"] or snap["cash"] or snap["invested"]:
-                    snap_payload = {
-                        "run_date": run.run_date.isoformat(),
-                        "data": snap,
-                        "generated_at": run.generated_at.isoformat(),
-                    }
-                    resp = client.post(
-                        f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO}?on_conflict=run_date",
-                        json=snap_payload,
-                        headers=headers,
-                    )
-                    resp.raise_for_status()
+                    _persist_portfolio_snapshot(client, rest_url, headers, run_id, run, snap)
             except Exception as exc:
                 log.warning("Could not persist portfolio snapshot: %s", exc)
 
@@ -971,11 +964,118 @@ def persist_to_supabase(run: BriefRun) -> bool:
         return False
 
 
+def _persist_portfolio_snapshot(client, rest_url, headers, run_id, run, snap: dict) -> None:
+    """Write the portfolio snapshot (aggregate + items) and current holdings."""
+    _upsert_portfolio_snapshot_row(client, rest_url, headers, run_id, run, snap)
+    _upsert_portfolio_holdings(client, rest_url, headers, snap)
+
+
+def _upsert_portfolio_snapshot_row(client, rest_url, headers, run_id, run, snap: dict) -> None:
+    """Upsert the aggregate snapshot row, then its per-holding items."""
+    payload = {
+        "run_id": run_id,
+        "run_date": run.run_date.isoformat(),
+        "net_worth_cad": snap["net_worth"],
+        "invested_cad": snap["invested"],
+        "cash_cad": snap["cash"],
+        "cost_cad": snap["cost"],
+        "day_change_cad": snap["day_chg"],
+        "day_pct": snap["day_pct"],
+        "return_pct": snap["return_pct"],
+        "return_cad": snap["return_cad"],
+        "all_time_pct": snap["all_time_pct"],
+        "all_time_cad": snap["all_time_cad"],
+        "fx_usd_cad": snap["fx_usd_cad"],
+        "generated_at": run.generated_at.isoformat(),
+    }
+    # return=representation gives us the row back so we can grab the id for
+    # the child items (works on both insert and upsert-update paths).
+    resp = client.post(
+        f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO}?on_conflict=run_id",
+        json=payload,
+        headers={
+            **headers,
+            "Prefer": "resolution=merge-duplicates,return=representation",
+        },
+    )
+    resp.raise_for_status()
+    rows = resp.json()
+    snap_id = rows[0]["id"] if rows else None
+    if snap_id is None:
+        raise RuntimeError("Could not determine snapshot id from Supabase response.")
+
+    items = [
+        {
+            "snapshot_id": snap_id,
+            "ticker": r["ticker"],
+            "account": r["account"],
+            "shares": r["shares"],
+            "avg_price": r["avg_price"],
+            "price": r["price"] or None,
+            "day_change_pct": r["day_pct"] or None,
+            "day_change_cad": r["day_chg_cad"],
+            "value_cad": r["value_cad"],
+            "return_pct": r["return_pct"],
+            "return_cad": r["return_cad"],
+        }
+        for r in snap["rows"]
+    ]
+    for i in range(0, len(items), 50):
+        batch = items[i : i + 50]
+        if not batch:
+            continue
+        resp = client.post(
+            f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO_ITEMS}"
+            "?on_conflict=snapshot_id,account,ticker",
+            json=batch,
+            headers=headers,
+        )
+        resp.raise_for_status()
+
+
+def _upsert_portfolio_holdings(client, rest_url, headers, snap: dict) -> None:
+    """Mirror current positions (portfolio of record) and prune sold ones."""
+    from src.database import init_db, Account
+
+    init_db()
+    local = [
+        {"account": acc.name, "ticker": h.ticker, "shares": h.shares, "avg_price": h.avg_price}
+        for acc in Account.select()
+        for h in acc.holdings
+    ]
+
+    for i in range(0, len(local), 50):
+        batch = local[i : i + 50]
+        resp = client.post(
+            f"{rest_url}/{_SUPABASE_TABLE_HOLDINGS}?on_conflict=account,ticker",
+            json=batch,
+            headers=headers,
+        )
+        resp.raise_for_status()
+
+    # Remove positions that no longer exist locally (sold / removed).
+    resp = client.get(
+        f"{rest_url}/{_SUPABASE_TABLE_HOLDINGS}?select=account", headers=headers
+    )
+    resp.raise_for_status()
+    remote_accounts = {r.get("account") for r in resp.json()}
+    local_accounts = {r["account"] for r in local}
+    for acc in sorted(remote_accounts | local_accounts):
+        kept = [r["ticker"] for r in local if r["account"] == acc]
+        query = f"{rest_url}/{_SUPABASE_TABLE_HOLDINGS}?account=eq.{acc}"
+        if kept:
+            query += f"&ticker=not.in.({','.join(kept)})"
+        resp = client.delete(query, headers=headers)
+        resp.raise_for_status()
+
+
 def fetch_remote_portfolio_snapshot() -> dict | None:
     """Latest portfolio snapshot from Supabase, or None when unavailable.
 
     Used by the newsletter when the local database has no holdings (e.g. CI),
     so the email can still include portfolio status from the last ``--persist``.
+    Reconstructs the same dict shape as ``portfolio.snapshot()`` from the
+    normalized aggregate + ``portfolio_snapshot_items`` rows.
     """
     import httpx
 
@@ -988,12 +1088,60 @@ def fetch_remote_portfolio_snapshot() -> dict | None:
         with httpx.Client(timeout=15) as client:
             resp = client.get(
                 f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO}"
-                "?select=data&order=run_date.desc&limit=1",
+                "?select=id,net_worth_cad,invested_cad,cash_cad,cost_cad,"
+                "day_change_cad,day_pct,return_pct,return_cad,all_time_pct,"
+                "all_time_cad,fx_usd_cad&order=run_date.desc&limit=1",
                 headers=headers,
             )
             resp.raise_for_status()
             rows = resp.json()
-        return rows[0]["data"] if rows else None
+        if not rows:
+            return None
+        row = rows[0]
+
+        # Items are fetched via a second request by snapshot id: embedding the
+        # child table (SELECT *,items(*)) needs PostgREST's schema-cache to
+        # know the FK relationship, which vanishes on managed Supabase until a
+        # cache refresh. Two plain queries are cache-independent.
+        with httpx.Client(timeout=15) as client:
+            resp = client.get(
+                f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO_ITEMS}"
+                f"?select=ticker,account,shares,avg_price,price,day_change_pct,"
+                f"day_change_cad,value_cad,return_pct,return_cad"
+                f"&snapshot_id=eq.{row['id']}&order=value_cad.desc",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            items = resp.json()
+        items = [it for it in items if it.get("ticker")]
+        return {
+            "rows": [
+                {
+                    "ticker": it["ticker"],
+                    "account": it.get("account", "CAD"),
+                    "shares": it["shares"],
+                    "avg_price": it.get("avg_price"),
+                    "price": it.get("price"),
+                    "day_pct": it.get("day_change_pct") or 0.0,
+                    "day_chg_cad": it.get("day_change_cad") or 0.0,
+                    "value_cad": it.get("value_cad") or 0.0,
+                    "return_pct": it.get("return_pct") or 0.0,
+                    "return_cad": it.get("return_cad") or 0.0,
+                }
+                for it in items
+            ],
+            "net_worth": row["net_worth_cad"],
+            "invested": row["invested_cad"],
+            "cash": row["cash_cad"],
+            "cost": row["cost_cad"],
+            "day_chg": row["day_change_cad"],
+            "day_pct": row["day_pct"],
+            "return_pct": row["return_pct"],
+            "return_cad": row["return_cad"],
+            "all_time_pct": row["all_time_pct"],
+            "all_time_cad": row["all_time_cad"],
+            "fx_usd_cad": row["fx_usd_cad"],
+        }
     except Exception as exc:
         log.warning("Could not fetch portfolio snapshot: %s", exc)
         return None

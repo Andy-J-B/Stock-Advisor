@@ -57,27 +57,95 @@ create table if not exists market_overview (
     generated_at timestamptz not null default now()
 );
 
--- One row per run_date holding the live portfolio snapshot (CAD) so the
--- nightly CI/email can restore portfolio status without a local DB.
-create table if not exists portfolio_snapshots (
-    run_date     date primary key,
-    data         jsonb not null,
-    generated_at timestamptz not null default now()
+-- Portfolio data: normalized, persistent copy of the local portfolio so the
+-- nightly CI brief + newsletter can render portfolio status without a local
+-- database.  Three tables:
+--   * portfolio_holdings        — current positions (portfolio of record)
+--   * portfolio_snapshots       — one immutable aggregate row per brief run
+--   * portfolio_snapshot_items  — per-holding breakdown of each snapshot
+--
+-- This replaces the original single JSONB-blob `portfolio_snapshots` design
+-- (dropped below) with a queryable relational schema.
+
+drop table if exists portfolio_snapshots cascade;
+
+-- Make this file re-runnable: clear every existing policy in public so the
+-- create policy statements below can be re-applied fresh.
+do $$
+declare r record;
+begin
+  for r in
+    select policyname as name, tablename as tbl
+    from pg_policies
+    where schemaname = 'public'
+  loop
+    execute format('drop policy if exists %I on %I', r.name, r.tbl);
+  end loop;
+end $$;
+
+create table if not exists portfolio_holdings (
+    id         bigserial primary key,
+    account    text not null,
+    ticker     text not null,
+    shares     numeric not null default 0,
+    avg_price  numeric not null default 0,
+    updated_at timestamptz not null default now(),
+    unique (account, ticker)
 );
+create index if not exists idx_portfolio_holdings_ticker on portfolio_holdings (ticker);
+
+create table if not exists portfolio_snapshots (
+    id             bigserial primary key,
+    run_id         bigint not null references brief_runs(id) on delete cascade unique,
+    run_date       date not null unique,
+    net_worth_cad  numeric not null,
+    invested_cad   numeric not null,
+    cash_cad       numeric not null default 0,
+    cost_cad       numeric not null default 0,
+    day_change_cad numeric not null default 0,
+    day_pct        numeric not null default 0,
+    return_pct     numeric not null default 0,
+    return_cad     numeric not null default 0,
+    all_time_pct   numeric not null default 0,
+    all_time_cad   numeric not null default 0,
+    fx_usd_cad     numeric not null default 1,
+    generated_at   timestamptz not null default now()
+);
+
+create table if not exists portfolio_snapshot_items (
+    id             bigserial primary key,
+    snapshot_id    bigint not null references portfolio_snapshots(id) on delete cascade,
+    ticker         text not null,
+    account        text not null,
+    shares         numeric not null,
+    avg_price      numeric not null default 0,
+    price          numeric,
+    day_change_pct numeric,
+    day_change_cad numeric not null default 0,
+    value_cad      numeric not null default 0,
+    return_pct     numeric not null default 0,
+    return_cad     numeric not null default 0,
+    unique (snapshot_id, account, ticker)
+);
+create index if not exists idx_snapshot_items_ticker on portfolio_snapshot_items (ticker);
 
 -- Row-level security: the anon key (used by both the nightly `brief --persist`
 -- in CI and the read-only Streamlit dashboard) needs select + write access.
-alter table brief_runs    enable row level security;
-alter table ticker_scores enable row level security;
-alter table watchlist     enable row level security;
-alter table market_overview enable row level security;
-alter table portfolio_snapshots enable row level security;
+alter table brief_runs         enable row level security;
+alter table ticker_scores      enable row level security;
+alter table watchlist          enable row level security;
+alter table market_overview    enable row level security;
+alter table portfolio_snapshots      enable row level security;
+alter table portfolio_snapshot_items enable row level security;
+alter table portfolio_holdings        enable row level security;
 
-create policy "allow read" on brief_runs   for select using (true);
-create policy "allow read" on ticker_scores for select using (true);
-create policy "allow read" on watchlist    for select using (true);
-create policy "allow read" on market_overview for select using (true);
-create policy "allow read" on portfolio_snapshots for select using (true);
+create policy "allow read" on brief_runs            for select using (true);
+create policy "allow read" on ticker_scores         for select using (true);
+create policy "allow read" on watchlist             for select using (true);
+create policy "allow read" on market_overview       for select using (true);
+create policy "allow read" on portfolio_snapshots        for select using (true);
+create policy "allow read" on portfolio_snapshot_items   for select using (true);
+create policy "allow read" on portfolio_holdings          for select using (true);
 
 create policy "allow write" on brief_runs
     for insert with check (true);
@@ -105,3 +173,17 @@ create policy "allow write" on portfolio_snapshots
     for insert with check (true);
 create policy "allow update" on portfolio_snapshots
     for update using (true) with check (true);
+
+create policy "allow write" on portfolio_snapshot_items
+    for insert with check (true);
+create policy "allow update" on portfolio_snapshot_items
+    for update using (true) with check (true);
+create policy "allow delete" on portfolio_snapshot_items
+    for delete using (true);
+
+create policy "allow write" on portfolio_holdings
+    for insert with check (true);
+create policy "allow update" on portfolio_holdings
+    for update using (true) with check (true);
+create policy "allow delete" on portfolio_holdings
+    for delete using (true);

@@ -196,6 +196,13 @@ python main.py brief-weights --sentiment 0.30 --ml 0.30
    - `ticker_scores` — one row per (run, ticker) with composite + raw components + enrichment (`price`, `day_change_pct`, `top_headline`, `analyst_breakdown`, `signal_agreement`, `anomaly_detail`, `portfolio_weight`, `recommendation`)
    - `market_overview` — one row per `run_date` (indices + top news snapshot)
    - `watchlist` — the current watchlist, synced after any change and after a `--persist`
+   - Portfolio (normalized, mirroring the local SQLite DB):
+     - `portfolio_snapshots` — one immutable aggregate row per run (`run_id`,
+       `run_date`, all metrics in CAD, `generated_at`)
+     - `portfolio_snapshot_items` — per-holding breakdown of each snapshot
+       (`ticker`, `account`, `shares`, `avg_price`, `price`, day/return deltas)
+     - `portfolio_holdings` — current positions (portfolio of record), kept in
+       sync and pruned on every persist so CI jobs see the live portfolio
 4. `python main.py brief --notify` posts the score summary **plus the market recap** to your webhook.
 
 ### Automated nightly runs
@@ -231,9 +238,10 @@ To receive it: create a Gmail **App Password** (Google Account → Security →
 `SMTP_USER=<your gmail>`, `SMTP_PASSWORD=<app password>`, `EMAIL_TO=080.abae@gmail.com`
 in `.env` (local) or as GitHub Actions secrets (CI). Without SMTP configured the
 command just saves the HTML preview to `data/`, so the layout can be checked
-before first send. The newsletter reuses the latest Supabase `portfolio_snapshots`
-row (written by `brief --persist`) when the local SQLite DB has no holdings, so it
-works headless in CI.
+before first send. The newsletter reuses the latest Supabase portfolio snapshot
+(written by `brief --persist` into `portfolio_snapshots` + its
+`portfolio_snapshot_items`) when the local SQLite DB has no holdings, so it works
+headless in CI.
 
 ### History dashboard (Streamlit)
 
@@ -312,6 +320,6 @@ Fetches S&P 500 / TSX 60 constituents from Wikipedia (cached 7d). Ranks by analy
 .venv/bin/python -m pytest tests/ -v
 ```
 
-249 tests across 17 files: cache, database, portfolio, indicators, risk, optimizer, sentiment, features, ML model, anomaly detection, screener, brief (scores, market overview, enrichment + recommendations), newsletter (render, exec summary, fundamentals, recipients, SMTP, preview), Canadian-to-US ticker mapping, and CLI helpers.
+253 tests across 17 files: cache, database, portfolio, indicators, risk, optimizer, sentiment, features, ML model, anomaly detection, screener, brief (scores, market overview, enrichment + recommendations), newsletter (render, exec summary, fundamentals, recipients, SMTP, preview), Canadian-to-US ticker mapping, and CLI helpers.
 
 CI: ruff lint + pytest with coverage (Python 3.12). `run_brief()` is headless-safe under CI/non-TTY (default risk allocation instead of the interactive setup prompt).

@@ -71,7 +71,11 @@ def get_ticker_info(ticker: str) -> dict:
     except Exception:
         result = {}
 
-    cache_set(cache_key, result)
+    # Only cache non-empty results — yfinance transiently returns {} under
+    # rate limits, and caching that would poison the newsletter/dashboard
+    # for the whole TTL instead of retrying on the next call.
+    if result:
+        cache_set(cache_key, result)
     return result
 
 

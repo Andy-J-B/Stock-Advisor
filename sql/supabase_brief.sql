@@ -51,10 +51,18 @@ create table if not exists watchlist (
 -- Non-stock market context stored per run: major index moves + top news,
 -- so the dashboard and webhook can recap the day beyond the tickers.
 create table if not exists market_overview (
-    run_date      date not null unique,
-    indices       jsonb not null default '{}'::jsonb,
-    news          jsonb not null default '[]'::jsonb,
-    generated_at  timestamptz not null default now()
+    run_date     date primary key,
+    indices      jsonb not null,
+    news         jsonb not null,
+    generated_at timestamptz not null default now()
+);
+
+-- One row per run_date holding the live portfolio snapshot (CAD) so the
+-- nightly CI/email can restore portfolio status without a local DB.
+create table if not exists portfolio_snapshots (
+    run_date     date primary key,
+    data         jsonb not null,
+    generated_at timestamptz not null default now()
 );
 
 -- Row-level security: the anon key (used by both the nightly `brief --persist`
@@ -63,11 +71,13 @@ alter table brief_runs    enable row level security;
 alter table ticker_scores enable row level security;
 alter table watchlist     enable row level security;
 alter table market_overview enable row level security;
+alter table portfolio_snapshots enable row level security;
 
 create policy "allow read" on brief_runs   for select using (true);
 create policy "allow read" on ticker_scores for select using (true);
 create policy "allow read" on watchlist    for select using (true);
 create policy "allow read" on market_overview for select using (true);
+create policy "allow read" on portfolio_snapshots for select using (true);
 
 create policy "allow write" on brief_runs
     for insert with check (true);
@@ -89,4 +99,9 @@ create policy "allow delete" on watchlist
 create policy "allow write" on market_overview
     for insert with check (true);
 create policy "allow update" on market_overview
+    for update using (true) with check (true);
+
+create policy "allow write" on portfolio_snapshots
+    for insert with check (true);
+create policy "allow update" on portfolio_snapshots
     for update using (true) with check (true);

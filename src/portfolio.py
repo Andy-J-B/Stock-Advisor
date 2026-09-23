@@ -27,6 +27,71 @@ def load() -> dict:
     return result
 
 
+def snapshot() -> dict:
+    """Live portfolio snapshot (all values in CAD) for the newsletter/CI.
+
+    Mirrors ``view-portfolio``: prices fetched in parallel and USD converted
+    to CAD. Returns rows + summary, or an empty snapshot when no holdings
+    exist locally (callers can fall back to a remote copy meanwhile).
+    """
+    init_db()
+    fx = data_client.get_usd_to_cad()
+    tickers = [h.ticker for acc in Account.select() for h in acc.holdings]
+    prices = data_client.get_current_prices_batch(tickers)
+
+    grand = {"value": 0.0, "cost": 0.0, "cash": 0.0, "initial": 0.0, "day_chg": 0.0}
+    rows: list[dict] = []
+    for acc in Account.select():
+        multiplier = fx if acc.name == "USD" else 1.0
+        grand["cash"] += acc.cash * multiplier
+        grand["initial"] += acc.initial_cash * multiplier
+        for h in acc.holdings:
+            live, prev = prices.get(h.ticker, (0.0, 0.0))
+            cost = h.shares * h.avg_price
+            value = h.shares * live if live else cost
+            day_chg = (live - prev) * h.shares if prev else 0.0
+            ret = value - cost
+            rows.append(
+                {
+                    "ticker": h.ticker,
+                    "account": acc.name,
+                    "shares": h.shares,
+                    "avg_price": h.avg_price,
+                    "price": live,
+                    "day_pct": ((live - prev) / prev * 100) if (prev and live) else 0.0,
+                    "day_chg_cad": day_chg * multiplier,
+                    "value_cad": value * multiplier,
+                    "return_pct": (ret / cost * 100) if cost else 0.0,
+                    "return_cad": ret * multiplier,
+                }
+            )
+            grand["value"] += value * multiplier
+            grand["cost"] += cost * multiplier
+            grand["day_chg"] += day_chg * multiplier
+
+    net_worth = grand["value"] + grand["cash"]
+    return {
+        "rows": sorted(rows, key=lambda r: r["value_cad"], reverse=True),
+        "net_worth": net_worth,
+        "invested": grand["value"],
+        "cash": grand["cash"],
+        "cost": grand["cost"],
+        "day_chg": grand["day_chg"],
+        "day_pct": (grand["day_chg"] / (grand["value"] - grand["day_chg"]) * 100)
+        if (grand["value"] - grand["day_chg"]) > 0
+        else 0.0,
+        "return_pct": (grand["value"] - grand["cost"]) / grand["cost"] * 100
+        if grand["cost"]
+        else 0.0,
+        "return_cad": grand["value"] - grand["cost"],
+        "all_time_pct": (net_worth - grand["initial"]) / grand["initial"] * 100
+        if grand["initial"]
+        else 0.0,
+        "all_time_cad": net_worth - grand["initial"],
+        "fx_usd_cad": fx,
+    }
+
+
 def save(data: dict):
     """Pushes a full dict back into the database (used for backward compat)."""
     init_db()

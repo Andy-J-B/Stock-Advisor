@@ -34,6 +34,13 @@ Optional interactive menu:
 | `DATABASE_REST_URL`    | Supabase PostgREST base URL (e.g. `https://<ref>.supabase.co/rest/v1`)              |
 | `SUPABASE_PUBLISHABLE_KEY` | Supabase **publishable** key (`sb_publishable_...`) for PostgREST inserts       |
 | `NOTIFY_WEBHOOK_URL`   | Discord/Slack/Telegram webhook for `brief --notify` and nightly-failure alerts      |
+| `SMTP_HOST`            | SMTP server for the daily newsletter (e.g. `smtp.gmail.com`)                              |
+| `SMTP_PORT`            | SMTP port (default `587` STARTTLS)                                                        |
+| `SMTP_USER`            | SMTP login (e.g. your Gmail address)                                                      |
+| `SMTP_PASSWORD`        | SMTP **App Password** (not your Gmail password)                                           |
+| `EMAIL_FROM`           | Sender address (defaults to `SMTP_USER`)                                                  |
+| `EMAIL_FROM_NAME`      | Sender display name (default `Stock Advisor`)                                             |
+| `EMAIL_TO`             | Recipient address(es), comma-separated (default `080.abae@gmail.com`)                     |
 
 Without `GEMINI_API_KEY`, commands fall back to locally-computed analysis.
 
@@ -72,6 +79,7 @@ Without `GEMINI_API_KEY`, commands fall back to locally-computed analysis.
 | `brief [--tickers ...] [--persist] [--notify]` | Score every holding/watchlist ticker with a conviction score [-100, +100] |
 | `brief-weights --sentiment 0.25 --ml 0.30` | View/update conviction scoring weights |
 | `watchlist show / add --ticker X / remove --ticker X` | Manage watchlist tickers (scored by `brief`) |
+| `newsletter` | Build + email today's daily HTML newsletter |
 | `dashboard.py` | Streamlit app to browse conviction history day by day |
 
 ### Configuration
@@ -114,6 +122,7 @@ Stock-Advisor/
     ├── ml_model.py         # LightGBM classifier (walk-forward CV, auto-retrain)
     ├── anomaly.py          # Isolation Forest + GMM anomaly detection
     ├── screener.py         # Analyst-consensus stock screener (top-buys)
+    ├── newsletter.py       # Daily HTML email (render, SMTP, preview)
     └── brief.py            # Composite conviction scoring + market snapshot (nightly brief)
 ```
 
@@ -198,6 +207,34 @@ schedules instead.) Add the API keys + `DATABASE_URL`/`DATABASE_REST_URL`/
 `SUPABASE_PUBLISHABLE_KEY`/`NOTIFY_WEBHOOK_URL` as repo Actions secrets (or GitLab
 project CI/CD variables).
 
+### Daily newsletter (email)
+
+After the nightly brief, a `newsletter` job in the same workflow builds an
+HTML digest and emails it via Gmail SMTP (stdlib `smtplib`, no extra deps):
+
+- **Executive summary** (Gemini when available, local rule-based fallback)
+- **Market snapshot** — index closes/changes + top headlines
+- **Portfolio** — per-position shares/price/value/weight + net-worth KPIs
+- **Top stocks to consider** and **Watch out** buckets from the conviction scores
+- **Valuation snapshot** — market cap, P/E (TTM + forward), price/book,
+  dividend yield, 52-week range, target price (best-effort via yfinance)
+- **Company news** for the day's top movers
+
+```bash
+python main.py newsletter                 # build + send
+python main.py newsletter --no-send       # write data/newsletter_<date>.html only
+python main.py newsletter --preview       # force preview even with SMTP configured
+```
+
+To receive it: create a Gmail **App Password** (Google Account → Security →
+2-Step Verification → App passwords) and set `SMTP_HOST=smtp.gmail.com`,
+`SMTP_USER=<your gmail>`, `SMTP_PASSWORD=<app password>`, `EMAIL_TO=080.abae@gmail.com`
+in `.env` (local) or as GitHub Actions secrets (CI). Without SMTP configured the
+command just saves the HTML preview to `data/`, so the layout can be checked
+before first send. The newsletter reuses the latest Supabase `portfolio_snapshots`
+row (written by `brief --persist`) when the local SQLite DB has no holdings, so it
+works headless in CI.
+
 ### History dashboard (Streamlit)
 
 ```bash
@@ -275,6 +312,6 @@ Fetches S&P 500 / TSX 60 constituents from Wikipedia (cached 7d). Ranks by analy
 .venv/bin/python -m pytest tests/ -v
 ```
 
-234 tests across 16 files: cache, database, portfolio, indicators, risk, optimizer, sentiment, features, ML model, anomaly detection, screener, brief (scores, market overview, enrichment + recommendations), Canadian-to-US ticker mapping, and CLI helpers.
+247 tests across 17 files: cache, database, portfolio, indicators, risk, optimizer, sentiment, features, ML model, anomaly detection, screener, brief (scores, market overview, enrichment + recommendations), newsletter (render, exec summary, fundamentals, recipients, SMTP, preview), Canadian-to-US ticker mapping, and CLI helpers.
 
 CI: ruff lint + pytest with coverage (Python 3.12). `run_brief()` is headless-safe under CI/non-TTY (default risk allocation instead of the interactive setup prompt).

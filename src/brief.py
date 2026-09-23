@@ -686,6 +686,7 @@ _SUPABASE_TABLE_RUNS = "brief_runs"
 _SUPABASE_TABLE_SCORES = "ticker_scores"
 _SUPABASE_TABLE_WATCHLIST = "watchlist"
 _SUPABASE_TABLE_MARKET = "market_overview"
+_SUPABASE_TABLE_PORTFOLIO = "portfolio_snapshots"
 
 
 def _supabase_rest_config() -> tuple[str, str]:
@@ -939,6 +940,26 @@ def persist_to_supabase(run: BriefRun) -> bool:
                 )
                 resp.raise_for_status()
 
+            # Upsert a live portfolio snapshot so CI/newsletter jobs can render
+            # portfolio status without a local database (best-effort).
+            try:
+                from src import portfolio
+                snap = portfolio.snapshot()
+                if snap["rows"] or snap["cash"] or snap["invested"]:
+                    snap_payload = {
+                        "run_date": run.run_date.isoformat(),
+                        "data": snap,
+                        "generated_at": run.generated_at.isoformat(),
+                    }
+                    resp = client.post(
+                        f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO}?on_conflict=run_date",
+                        json=snap_payload,
+                        headers=headers,
+                    )
+                    resp.raise_for_status()
+            except Exception as exc:
+                log.warning("Could not persist portfolio snapshot: %s", exc)
+
         log.info(
             "Persisted brief run (id=%s) for %s with %d tickers.",
             run_id, run.run_date, len(run.scores),
@@ -948,6 +969,34 @@ def persist_to_supabase(run: BriefRun) -> bool:
     except Exception as exc:
         log.error("Failed to persist brief run: %s", exc)
         return False
+
+
+def fetch_remote_portfolio_snapshot() -> dict | None:
+    """Latest portfolio snapshot from Supabase, or None when unavailable.
+
+    Used by the newsletter when the local database has no holdings (e.g. CI),
+    so the email can still include portfolio status from the last ``--persist``.
+    """
+    import httpx
+
+    rest_url, api_key = _supabase_rest_config()
+    if not rest_url or not api_key:
+        return None
+
+    try:
+        headers = {"apikey": api_key, "Accept": "application/json"}
+        with httpx.Client(timeout=15) as client:
+            resp = client.get(
+                f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO}"
+                "?select=data&order=run_date.desc&limit=1",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            rows = resp.json()
+        return rows[0]["data"] if rows else None
+    except Exception as exc:
+        log.warning("Could not fetch portfolio snapshot: %s", exc)
+        return None
 
 
 # ---------------------------------------------------------------------------

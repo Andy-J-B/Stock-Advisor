@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from rich.markdown import Markdown
 from src import setup, portfolio, advisor, config, data_client, __version__
 from src import risk, indicators, optimizer, features, ml_model, anomaly, ticker_map
-from src import screener, brief
+from src import screener, brief, newsletter
 from src.database import (
     get_watchlist, add_to_watchlist, remove_from_watchlist, init_db,
 )
@@ -1297,6 +1297,35 @@ def brief_weights(
     for k, v in current.items():
         table.add_row(k, f"{v:.2f}")
     console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# Commands – Email Newsletter
+# ---------------------------------------------------------------------------
+
+@app.command("newsletter")
+def send_newsletter(
+    send: bool = typer.Option(
+        True, "--send/--no-send",
+        help="Actually send the email (default). With --no-send, only write the HTML preview.",
+    ),
+    force_preview: bool = typer.Option(
+        False, "--preview", "-p",
+        help="Force writing the HTML preview to data/ even when SMTP is configured.",
+    ),
+):
+    """Build and email today's daily newsletter.
+
+    Scores every holding/watchlist ticker (same engine as ``brief``), pulls in
+    market news, portfolio stats and fundamentals, then sends a professionally
+    formatted HTML digest to EMAIL_TO (default 080.abae@gmail.com) via SMTP.
+    Requires SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASSWORD in the environment;
+    without them the HTML is written to data/newsletter_<date>.html instead.
+    """
+    with console.status("[bold green]Assembling today's newsletter...[/bold green]"):
+        ok = newsletter.run_newsletter(send=send, preview=force_preview)
+    if not ok:
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

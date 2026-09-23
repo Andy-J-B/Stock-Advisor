@@ -76,29 +76,33 @@ def is_smtp_configured() -> bool:
 # ---------------------------------------------------------------------------
 
 def _fundamentals(tickers: list[str]) -> dict[str, dict]:
-    """Best-effort fundamentals keyed by ticker, '' values when unavailable."""
+    """Best-effort fundamentals keyed by ticker; missing values are 'N/A'.
+
+    Dicts are keyed by the internal field names in ``_FUND_KEYS`` so
+    ``_fund_table_flat`` can render them via ``(label, key)``.
+    """
     out: dict[str, dict] = {}
     for t in dict.fromkeys(tickers):
         info = data_client.get_ticker_info(t)
         cap = info.get("marketCap")
         div = info.get("dividendYield")
         out[t] = {
-            "Market Cap": (
+            "formatted_market_cap": (
                 f"{cap / 1e9:.2f}B" if isinstance(cap, (int, float)) and cap else "N/A"
             ),
-            "P/E (trailing)": _fmt_num(info.get("trailingPE")),
-            "P/E (forward)": _fmt_num(info.get("forwardPE")),
-            "Price/Book": _fmt_num(info.get("priceToBook")),
+            "trailingPE": _fmt_num(info.get("trailingPE")),
+            "forwardPE": _fmt_num(info.get("forwardPE")),
+            "priceToBook": _fmt_num(info.get("priceToBook")),
             # yfinance reports garbage dividend yields for CDR/ETF tickers
             # (e.g. 71%) — clamp to a plausible bound.
-            "Div Yield": (
+            "dividendYield": (
                 f"{div * 100:.2f}%"
                 if isinstance(div, (int, float)) and 0 < div <= 0.25
                 else "N/A"
             ),
-            "52wk High": _fmt_price(info.get("fiftyTwoWeekHigh")),
-            "52wk Low": _fmt_price(info.get("fiftyTwoWeekLow")),
-            "Target Price": _fmt_price(info.get("targetMeanPrice")),
+            "fiftyTwoWeekHigh": _fmt_price(info.get("fiftyTwoWeekHigh")),
+            "fiftyTwoWeekLow": _fmt_price(info.get("fiftyTwoWeekLow")),
+            "targetMeanPrice": _fmt_price(info.get("targetMeanPrice")),
         }
     return out
 

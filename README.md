@@ -312,6 +312,6 @@ Fetches S&P 500 / TSX 60 constituents from Wikipedia (cached 7d). Ranks by analy
 .venv/bin/python -m pytest tests/ -v
 ```
 
-247 tests across 17 files: cache, database, portfolio, indicators, risk, optimizer, sentiment, features, ML model, anomaly detection, screener, brief (scores, market overview, enrichment + recommendations), newsletter (render, exec summary, fundamentals, recipients, SMTP, preview), Canadian-to-US ticker mapping, and CLI helpers.
+249 tests across 17 files: cache, database, portfolio, indicators, risk, optimizer, sentiment, features, ML model, anomaly detection, screener, brief (scores, market overview, enrichment + recommendations), newsletter (render, exec summary, fundamentals, recipients, SMTP, preview), Canadian-to-US ticker mapping, and CLI helpers.
 
 CI: ruff lint + pytest with coverage (Python 3.12). `run_brief()` is headless-safe under CI/non-TTY (default risk allocation instead of the interactive setup prompt).

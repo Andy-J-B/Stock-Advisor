@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
@@ -66,14 +67,21 @@ def get_ticker_info(ticker: str) -> dict:
     if cached is not None:
         return cached
 
-    try:
-        result = yf.Ticker(ticker).info or {}
-    except Exception:
-        result = {}
+    # yfinance .info returns {} transiently when Yahoo rate-limits (a few
+    # seconds after a heavy price/history burst) — retry with backoff so a
+    # freshly-run brief still populates the newsletter/dashboard valuation.
+    result = {}
+    for attempt in range(3):
+        try:
+            result = yf.Ticker(ticker).info or {}
+        except Exception:
+            result = {}
+        if result:
+            break
+        time.sleep(1.5 * (attempt + 1))
 
-    # Only cache non-empty results — yfinance transiently returns {} under
-    # rate limits, and caching that would poison the newsletter/dashboard
-    # for the whole TTL instead of retrying on the next call.
+    # Only cache non-empty results — caching {} would poison the
+    # newsletter/dashboard for the whole TTL instead of retrying next call.
     if result:
         cache_set(cache_key, result)
     return result

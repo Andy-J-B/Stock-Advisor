@@ -60,9 +60,10 @@ def _fake_snapshot() -> dict:
 
 def _fake_funds() -> dict:
     return {
-        "MSFT": {"Market Cap": "2.50B", "P/E (trailing)": "30.10",
-                 "P/E (forward)": "28.00", "Price/Book": "12.00", "Div Yield": "0.80%",
-                 "52wk High": "420.00", "52wk Low": "300.00", "Target Price": "450.00"},
+        "MSFT": {"formatted_market_cap": "2.50B", "trailingPE": "30.10",
+                 "forwardPE": "28.00", "priceToBook": "12.00", "dividendYield": "0.80%",
+                 "fiftyTwoWeekHigh": "420.00", "fiftyTwoWeekLow": "300.00",
+                 "targetMeanPrice": "450.00"},
     }
 
 
@@ -120,8 +121,8 @@ def test_recipients_csv(monkeypatch):
 def test_fundamentals_fallback(monkeypatch):
     monkeypatch.setattr(newsletter.data_client, "get_ticker_info", lambda t: {})
     funds = newsletter._fundamentals(["MSFT", "ZZZ"])
-    assert funds["MSFT"]["Market Cap"] == "N/A"
-    assert funds["ZZZ"]["P/E (trailing)"] == "N/A"
+    assert funds["MSFT"]["formatted_market_cap"] == "N/A"
+    assert funds["ZZZ"]["trailingPE"] == "N/A"
 
 
 def test_fundamentals_dividend_cap(monkeypatch):
@@ -135,9 +136,15 @@ def test_fundamentals_dividend_cap(monkeypatch):
 
     monkeypatch.setattr(newsletter.data_client, "get_ticker_info", fake_info)
     funds = newsletter._fundamentals(["ABC.TO"])
-    assert funds["ABC.TO"]["Div Yield"] == "N/A"
-    assert funds["ABC.TO"]["Market Cap"] == "1.23B"
-    assert funds["ABC.TO"]["P/E (trailing)"] == "15.00"
+    assert funds["ABC.TO"]["dividendYield"] == "N/A"
+    assert funds["ABC.TO"]["formatted_market_cap"] == "1.23B"
+    assert funds["ABC.TO"]["trailingPE"] == "15.00"
+
+
+def test_fund_table_flat_renders_values():
+    out = newsletter._fund_table_flat(_fake_funds())
+    assert "2.50B" in out and "30.10" in out and "450.00" in out
+    assert "Market Cap" in out and "P/E (trailing)" in out
 
 
 def test_render_email_modern_layout():
@@ -154,6 +161,32 @@ def test_rec_pill_kinds():
     assert "pill alert" in newsletter._rec_pill("Avoid — no position")
     assert "pill watch" in newsletter._rec_pill("Hold / watch")
     assert "pill muted" in newsletter._rec_pill(None)
+
+
+def test_ticker_info_retries_on_empty(monkeypatch):
+    calls = {"n": 0, "stored": None}
+
+    class FakeTicker:
+        def __init__(self, t):
+            self.t = t
+
+        @property
+        def info(self):
+            calls["n"] += 1
+            if calls["n"] < 2:
+                return {}  # simulate a transient Yahoo rate-limit
+            return {"marketCap": 1e9, "trailingPE": 20.0}
+
+    monkeypatch.setattr(newsletter.data_client, "cache_get", lambda k, ttl: None)
+    monkeypatch.setattr(newsletter.data_client, "cache_set",
+                        lambda k, v: calls.__setitem__("stored", v))
+    monkeypatch.setattr(newsletter.data_client.yf, "Ticker", FakeTicker)
+    monkeypatch.setattr(newsletter.data_client.time, "sleep", lambda s: None)
+
+    info = newsletter.data_client.get_ticker_info("ZZZ")
+    assert info["marketCap"] == 1e9
+    assert calls["n"] == 2          # second attempt succeeded
+    assert calls["stored"]["trailingPE"] == 20.0
 
 
 # ---------------------------------------------------------------------------

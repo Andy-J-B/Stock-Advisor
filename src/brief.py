@@ -949,10 +949,32 @@ def persist_to_supabase(run: BriefRun) -> bool:
             # A snapshot is always written: on a machine with the local DB the
             # live local snapshot wins; in CI (empty local DB) it is rebuilt
             # from the remote portfolio tables + live prices, then upserted.
+            # If no portfolio exists at all (fresh install, no remote mirror),
+            # an empty zero-valued snapshot is still written so the daily
+            # history always has a row per run_date (same-day re-runs overwrite
+            # via on_conflict=run_date).
             try:
                 snap = _load_portfolio_snapshot(client, rest_url, headers)
-                if snap is not None:
-                    _persist_portfolio_snapshot(client, rest_url, headers, run_id, run, snap)
+                if snap is None:
+                    try:
+                        fx = data_client.get_usd_to_cad()
+                    except Exception:
+                        fx = 1.0
+                    snap = {
+                        "rows": [],
+                        "net_worth": 0.0,
+                        "invested": 0.0,
+                        "cash": 0.0,
+                        "cost": 0.0,
+                        "day_chg": 0.0,
+                        "day_pct": 0.0,
+                        "return_pct": 0.0,
+                        "return_cad": 0.0,
+                        "all_time_pct": 0.0,
+                        "all_time_cad": 0.0,
+                        "fx_usd_cad": fx,
+                    }
+                _persist_portfolio_snapshot(client, rest_url, headers, run_id, run, snap)
             except Exception as exc:
                 log.warning("Could not persist portfolio snapshot: %s", exc)
 
@@ -1161,7 +1183,12 @@ def _upsert_portfolio_snapshot_row(client, rest_url, headers, run_id, run, snap:
 
 
 def _upsert_portfolio_holdings(client, rest_url, headers, snap: dict) -> None:
-    """Mirror current accounts + positions (portfolio of record) and prune stale."""
+    """Mirror current accounts + positions (portfolio of record) and prune stale.
+
+    Skips sync entirely when the local DB has no accounts/holdings (e.g. a
+    fresh CI runner) so the nightly brief cannot wipe the remote portfolio
+    mirror that was populated from a previous local --persist.
+    """
     from src.database import init_db, Account
 
     init_db()
@@ -1174,6 +1201,11 @@ def _upsert_portfolio_holdings(client, rest_url, headers, snap: dict) -> None:
         {"account": acc.name, "cash": acc.cash, "initial_cash": acc.initial_cash}
         for acc in Account.select()
     ]
+
+    # Fresh CI runner has no local portfolio — don't wipe the remote mirror.
+    if not local and not accounts:
+        log.info("No local holdings/accounts to sync — skipping portfolio holdings mirror (CI).")
+        return
 
     for i in range(0, len(local), 50):
         batch = local[i : i + 50]

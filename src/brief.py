@@ -946,35 +946,25 @@ def persist_to_supabase(run: BriefRun) -> bool:
             # Persist the live portfolio snapshot as normalized rows so CI /
             # newsletter jobs can render portfolio status without a local DB.
             # Best-effort: failures here never fail the brief persist itself.
-            # A snapshot is always written: on a machine with the local DB the
-            # live local snapshot wins; in CI (empty local DB) it is rebuilt
-            # from the remote portfolio tables + live prices, then upserted.
-            # If no portfolio exists at all (fresh install, no remote mirror),
-            # an empty zero-valued snapshot is still written so the daily
-            # history always has a row per run_date (same-day re-runs overwrite
-            # via on_conflict=run_date).
+            # The snapshot is upserted on run_date (same-day re-runs overwrite
+            # via on_conflict=run_date). When neither the local DB nor the
+            # remote portfolio_holdings/accounts (or snapshot history) have an
+            # allocation, we skip the snapshot and warn — a $0 row would hide
+            # the real allocation and break the newsletter/email (see 2026-09-25
+            # zero snapshot). Seed once from your machine after adding holdings:
+            #   python main.py brief --persist
             try:
                 snap = _load_portfolio_snapshot(client, rest_url, headers)
                 if snap is None:
-                    try:
-                        fx = data_client.get_usd_to_cad()
-                    except Exception:
-                        fx = 1.0
-                    snap = {
-                        "rows": [],
-                        "net_worth": 0.0,
-                        "invested": 0.0,
-                        "cash": 0.0,
-                        "cost": 0.0,
-                        "day_chg": 0.0,
-                        "day_pct": 0.0,
-                        "return_pct": 0.0,
-                        "return_cad": 0.0,
-                        "all_time_pct": 0.0,
-                        "all_time_cad": 0.0,
-                        "fx_usd_cad": fx,
-                    }
-                _persist_portfolio_snapshot(client, rest_url, headers, run_id, run, snap)
+                    log.warning(
+                        "No portfolio holdings found locally or in Supabase "
+                        "(portfolio_holdings/accounts + snapshot history empty) — "
+                        "snapshot not created. Add holdings locally (add-stock / "
+                        "update-cash) then run `python main.py brief --persist` "
+                        "once from your machine to seed Supabase."
+                    )
+                else:
+                    _persist_portfolio_snapshot(client, rest_url, headers, run_id, run, snap)
             except Exception as exc:
                 log.warning("Could not persist portfolio snapshot: %s", exc)
 
@@ -997,7 +987,13 @@ def _persist_portfolio_snapshot(client, rest_url, headers, run_id, run, snap: di
 
 def _load_portfolio_snapshot(client, rest_url, headers) -> dict | None:
     """Snapshot to persist: live local one when holdings exist, else rebuild
-    from the remote portfolio tables + live prices (the CI path)."""
+    from the remote portfolio tables + live prices (the CI path).
+
+    Falls back to the most recent non-empty portfolio_snapshot_items when
+    portfolio_holdings/accounts are empty (e.g. after an accidental wipe or
+    fresh CI runner before the first local --persist seed). This ensures the
+    nightly brief always knows the allocation and never persists a $0 snapshot.
+    """
     try:
         from src import portfolio
         snap = portfolio.snapshot()
@@ -1006,10 +1002,22 @@ def _load_portfolio_snapshot(client, rest_url, headers) -> dict | None:
     if snap and (snap["rows"] or snap["cash"] or snap["invested"]):
         return snap
     try:
-        return _remote_derived_snapshot(client, rest_url, headers)
+        remote = _remote_derived_snapshot(client, rest_url, headers)
+        if remote is not None:
+            return remote
     except Exception as exc:
         log.warning("Could not rebuild portfolio snapshot from Supabase: %s", exc)
-        return None
+    # Last resort: rebuild from the most recent portfolio_snapshot that had
+    # holdings (covers the case where portfolio_holdings was wiped but
+    # snapshot history still has allocation).
+    try:
+        fallback = _snapshot_from_last_remote_snapshot(client, rest_url, headers)
+        if fallback is not None:
+            log.info("Rebuilt portfolio snapshot from last history (%d holdings).", len(fallback["rows"]))
+            return fallback
+    except Exception as exc:
+        log.warning("Could not fallback to last snapshot: %s", exc)
+    return None
 
 
 def _remote_derived_snapshot(client, rest_url, headers) -> dict | None:
@@ -1099,6 +1107,131 @@ def _remote_derived_snapshot(client, rest_url, headers) -> dict | None:
         "all_time_cad": net_worth - grand["initial"],
         "fx_usd_cad": fx,
     }
+
+
+def _snapshot_from_last_remote_snapshot(client, rest_url, headers) -> dict | None:
+    """Rebuild a snapshot from the most recent non-empty portfolio_snapshot.
+
+    Queries portfolio_snapshots ordered by run_date desc and inspects their
+    snapshot_items until one with holdings is found, then re-prices those
+    holdings with live prices. Used when portfolio_holdings/accounts are empty
+    but history exists (e.g. after a wipe). Returns None if no history.
+    """
+    from src import data_client
+
+    # Find the latest snapshot that had holdings (or cash) — skip pure $0 rows
+    # like the 2026-09-25 zero snapshot created before this fallback existed.
+    try:
+        resp = client.get(
+            f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO}"
+            "?select=id,run_date,net_worth_cad,invested_cad,cash_cad,cost_cad,"
+            "day_change_cad,day_pct,return_pct,return_cad,all_time_pct,"
+            "all_time_cad,fx_usd_cad&order=run_date.desc&limit=10",
+            headers={"apikey": headers.get("apikey", ""), "Accept": "application/json"},
+        )
+        resp.raise_for_status()
+        candidates = resp.json() or []
+    except Exception:
+        return None
+
+    for row in candidates:
+        if not row.get("id"):
+            continue
+        # Skip empty $0 snapshots
+        if not row.get("invested_cad") and not row.get("cash_cad"):
+            # Check if its items are also empty before skipping; an empty
+            # invested but non-empty items would still be valid.
+            try:
+                r2 = client.get(
+                    f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO_ITEMS}"
+                    f"?select=ticker&snapshot_id=eq.{row['id']}&limit=1",
+                    headers={"apikey": headers.get("apikey", ""), "Accept": "application/json"},
+                )
+                r2.raise_for_status()
+                if not r2.json():
+                    continue
+            except Exception:
+                continue
+        # Fetch full holdings for this candidate snapshot
+        try:
+            r = client.get(
+                f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO_ITEMS}"
+                f"?select=ticker,account,shares,avg_price&snapshot_id=eq.{row['id']}",
+                headers={"apikey": headers.get("apikey", ""), "Accept": "application/json"},
+            )
+            r.raise_for_status()
+            items = r.json() or []
+        except Exception:
+            continue
+        if not items:
+            continue
+        # Re-price holdings with live prices, reusing the same math as
+        # _remote_derived_snapshot but sourcing shares/avg_price from history.
+        holdings = [
+            {"account": it.get("account", "CAD"), "ticker": it["ticker"],
+             "shares": float(it["shares"]), "avg_price": float(it.get("avg_price") or 0)}
+            for it in items if it.get("ticker")
+        ]
+        if not holdings:
+            continue
+        try:
+            fx = data_client.get_usd_to_cad()
+            prices = data_client.get_current_prices_batch([h["ticker"] for h in holdings])
+        except Exception:
+            return None
+        grand = {"value": 0.0, "cost": 0.0, "cash": float(row.get("cash_cad") or 0.0),
+                 "initial": 0.0, "day_chg": 0.0}
+        # initial_cash fallback: if snapshot row has it, use it; else 0
+        # For history we don't have initial_cash separately, so all_time will be
+        # recomputed from cash+value - initial, which may be 0 -> 0% (acceptable).
+        # Try to fetch portfolio_accounts for initial if available.
+        try:
+            ar = client.get(
+                f"{rest_url}/{_SUPABASE_TABLE_ACCOUNTS}?select=account,initial_cash",
+                headers={"apikey": headers.get("apikey", ""), "Accept": "application/json"},
+            )
+            ar.raise_for_status()
+            for a in ar.json() or []:
+                mult = fx if a.get("account") == "USD" else 1.0
+                grand["initial"] += float(a.get("initial_cash") or 0) * mult
+        except Exception:
+            pass
+        rows: list[dict] = []
+        for h in holdings:
+            mult = fx if h["account"] == "USD" else 1.0
+            live, prev = prices.get(h["ticker"], (0.0, 0.0))
+            cost = h["shares"] * h["avg_price"]
+            value = h["shares"] * live if live else cost
+            day_chg = (live - prev) * h["shares"] if prev else 0.0
+            ret = value - cost
+            rows.append({
+                "ticker": h["ticker"], "account": h["account"],
+                "shares": h["shares"], "avg_price": h["avg_price"],
+                "price": live, "day_pct": ((live - prev)/prev*100) if (prev and live) else 0.0,
+                "day_chg_cad": day_chg * mult, "value_cad": value * mult,
+                "return_pct": (ret/cost*100) if cost else 0.0, "return_cad": ret * mult,
+            })
+            grand["value"] += value * mult
+            grand["cost"] += cost * mult
+            grand["day_chg"] += day_chg * mult
+        grand["cash"] = float(row.get("cash_cad") or grand["cash"])
+        # cash already in CAD from row; if USD account, row's cash is already CAD.
+        net_worth = grand["value"] + grand["cash"]
+        return {
+            "rows": sorted(rows, key=lambda r: r["value_cad"], reverse=True),
+            "net_worth": net_worth,
+            "invested": grand["value"],
+            "cash": grand["cash"],
+            "cost": grand["cost"],
+            "day_chg": grand["day_chg"],
+            "day_pct": (grand["day_chg"]/(grand["value"]-grand["day_chg"])*100) if (grand["value"]-grand["day_chg"])>0 else 0.0,
+            "return_pct": (grand["value"]-grand["cost"])/grand["cost"]*100 if grand["cost"] else 0.0,
+            "return_cad": grand["value"]-grand["cost"],
+            "all_time_pct": (net_worth - grand["initial"])/grand["initial"]*100 if grand["initial"] else float(row.get("all_time_pct") or 0.0),
+            "all_time_cad": net_worth - grand["initial"] if grand["initial"] else float(row.get("all_time_cad") or 0.0),
+            "fx_usd_cad": fx,
+        }
+    return None
 
 
 def _upsert_portfolio_snapshot_row(client, rest_url, headers, run_id, run, snap: dict) -> None:
@@ -1203,7 +1336,25 @@ def _upsert_portfolio_holdings(client, rest_url, headers, snap: dict) -> None:
     ]
 
     # Fresh CI runner has no local portfolio — don't wipe the remote mirror.
+    # If we rebuilt the snapshot from history (snap has rows but local is empty),
+    # re-seed the remote holdings/accounts from that snapshot so the next run
+    # doesn't need the fallback.
     if not local and not accounts:
+        if snap.get("rows"):
+            log.info("Local DB empty but snapshot has %d holdings — seeding remote holdings from snapshot.", len(snap["rows"]))
+            holdings_payload = [
+                {"account": r["account"], "ticker": r["ticker"], "shares": r["shares"], "avg_price": r["avg_price"]}
+                for r in snap["rows"]
+            ]
+            for i in range(0, len(holdings_payload), 50):
+                batch = holdings_payload[i:i+50]
+                resp = client.post(
+                    f"{rest_url}/{_SUPABASE_TABLE_HOLDINGS}?on_conflict=account,ticker",
+                    json=batch,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+            return
         log.info("No local holdings/accounts to sync — skipping portfolio holdings mirror (CI).")
         return
 
@@ -1262,6 +1413,8 @@ def fetch_remote_portfolio_snapshot() -> dict | None:
     so the email can still include portfolio status from the last ``--persist``.
     Reconstructs the same dict shape as ``portfolio.snapshot()`` from the
     normalized aggregate + ``portfolio_snapshot_items`` rows.
+    Skips empty $0 snapshots (e.g. 2026-09-25) and returns the most recent
+    snapshot that actually has holdings/cash.
     """
     import httpx
 
@@ -1276,14 +1429,34 @@ def fetch_remote_portfolio_snapshot() -> dict | None:
                 f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO}"
                 "?select=id,net_worth_cad,invested_cad,cash_cad,cost_cad,"
                 "day_change_cad,day_pct,return_pct,return_cad,all_time_pct,"
-                "all_time_cad,fx_usd_cad&order=run_date.desc&limit=1",
+                "all_time_cad,fx_usd_cad&order=run_date.desc&limit=10",
                 headers=headers,
             )
             resp.raise_for_status()
-            rows = resp.json()
-        if not rows:
+            candidates = resp.json() or []
+        if not candidates:
             return None
-        row = rows[0]
+        # Pick the most recent non-empty snapshot (skip $0 rows with no items)
+        row = None
+        for cand in candidates:
+            # If invested/cash both zero, verify it has items before using it
+            if not cand.get("invested_cad") and not cand.get("cash_cad"):
+                try:
+                    with httpx.Client(timeout=15) as c2:
+                        r = c2.get(
+                            f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO_ITEMS}"
+                            f"?select=ticker&snapshot_id=eq.{cand['id']}&limit=1",
+                            headers=headers,
+                        )
+                        r.raise_for_status()
+                        if not r.json():
+                            continue
+                except Exception:
+                    continue
+            row = cand
+            break
+        if row is None:
+            return None
 
         # Items are fetched via a second request by snapshot id: embedding the
         # child table (SELECT *,items(*)) needs PostgREST's schema-cache to

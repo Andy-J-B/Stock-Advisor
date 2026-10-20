@@ -9,9 +9,6 @@ from src.database import (
     Holding,
     NetWorthSnapshot,
     PriceBar,
-    PositionLot,
-    PositionPerformanceDaily,
-    Recommendation,
 )
 
 

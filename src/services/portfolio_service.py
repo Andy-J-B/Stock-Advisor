@@ -23,7 +23,6 @@ class PortfolioService:
         return self.portfolio_repo.get_holdings(account)
 
     def ensure_price_bars(self, tickers: list[str], period: str = "1y") -> int:
-        from src import data_client
         total = 0
         for t in set([x.upper() for x in tickers if x]):
             try:

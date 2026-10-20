@@ -14,7 +14,6 @@ from peewee import (
     DateField,
     ForeignKeyField,
     TextField,
-    IntegerField,
     BooleanField,
 )
 

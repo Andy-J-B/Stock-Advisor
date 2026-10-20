@@ -4,10 +4,8 @@ Run: streamlit run dashboard_new.py
 """
 from __future__ import annotations
 
-import ast
 import json
 import os
-from datetime import datetime
 
 import pandas as pd
 import plotly.graph_objects as go

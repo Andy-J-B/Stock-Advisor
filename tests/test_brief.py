@@ -549,3 +549,128 @@ def test_fetch_remote_portfolio_snapshot_mapping(monkeypatch):
 def test_fetch_remote_portfolio_snapshot_unconfigured(monkeypatch):
     monkeypatch.setattr(brief, "_supabase_rest_config", lambda: ("", ""))
     assert brief.fetch_remote_portfolio_snapshot() is None
+
+
+def _rec(json_):
+    class Rec:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return json_
+
+    return Rec()
+
+
+def test_remote_derived_snapshot_recovers_missing_cash_baseline(monkeypatch):
+    """Holdings mirrored but portfolio_accounts empty: cash/all-time must come
+    from history instead of reporting the whole net worth as an all-time gain."""
+    from src import brief as b
+
+    history = [{"run_date": "2026-09-23", "net_worth_cad": 58288.86,
+                "cash_cad": 27353.03, "all_time_cad": 5324.18}]
+
+    def fake_get(url, headers=None):
+        if "/portfolio_accounts?select=" in url:
+            return _rec([])
+        if "/portfolio_snapshots?" in url:
+            return _rec(history)
+        return _rec([{"account": "CAD", "ticker": "MU.NE",
+                      "shares": 100, "avg_price": 40.0}])
+
+    class FakeClient:
+        def get(self, url, headers=None):
+            return fake_get(url, headers)
+
+    monkeypatch.setattr(b.data_client, "get_usd_to_cad", lambda: 1.35)
+    monkeypatch.setattr(b.data_client, "get_current_prices_batch",
+                        lambda tks: {"MU.NE": (45.0, 43.5)})
+    snap = b._remote_derived_snapshot(FakeClient(), "https://db.example/rest/v1", {})
+    assert snap is not None
+    assert snap["cash"] == pytest.approx(27353.03)
+    assert snap["net_worth"] == pytest.approx(4500.0 + 27353.03)
+    initial = 58288.86 - 5324.18
+    assert snap["all_time_cad"] == pytest.approx(snap["net_worth"] - initial)
+    assert snap["all_time_cad"] < snap["net_worth"]  # never the whole portfolio
+
+
+def test_remote_derived_snapshot_all_time_zero_without_baseline(monkeypatch):
+    """No accounts and no usable history: all-time must be 0, not net worth."""
+    from src import brief as b
+
+    def fake_get(url, headers=None):
+        if "/portfolio_accounts?select=" in url:
+            return _rec([{"account": "CAD", "cash": 100.0, "initial_cash": 0.0}])
+        if "/portfolio_snapshots?" in url:
+            return _rec([])
+        return _rec([{"account": "CAD", "ticker": "MU.NE",
+                      "shares": 100, "avg_price": 40.0}])
+
+    class FakeClient:
+        def get(self, url, headers=None):
+            return fake_get(url, headers)
+
+    monkeypatch.setattr(b.data_client, "get_usd_to_cad", lambda: 1.0)
+    monkeypatch.setattr(b.data_client, "get_current_prices_batch",
+                        lambda tks: {"MU.NE": (45.0, 43.5)})
+    snap = b._remote_derived_snapshot(FakeClient(), "https://db.example/rest/v1", {})
+    assert snap["all_time_cad"] == 0.0
+    assert snap["all_time_pct"] == 0.0
+
+
+def test_fetch_remote_portfolio_snapshot_skips_baselineless_row(monkeypatch):
+    """A snapshot written while portfolio_accounts was empty (cash 0 and
+    all_time == net worth) must not be emailed when a good row exists."""
+    import sys
+    import types
+
+    monkeypatch.setattr(brief, "_supabase_rest_config",
+                        lambda: ("https://db.example/rest/v1", "k"))
+
+    snapshots_resp = [
+        {"id": 12, "net_worth_cad": 30685.39, "invested_cad": 30685.39,
+         "cash_cad": 0.0, "cost_cad": 29121.26, "day_change_cad": 40.0,
+         "day_pct": 0.13, "return_pct": 5.4, "return_cad": 1564.13,
+         "all_time_pct": 0.0, "all_time_cad": 30685.39, "fx_usd_cad": 1.4188},
+        {"id": 15, "net_worth_cad": 58152.63, "invested_cad": 31034.46,
+         "cash_cad": 27118.17, "cost_cad": 29375.27, "day_change_cad": 92.83,
+         "day_pct": 0.30, "return_pct": 5.65, "return_cad": 1659.19,
+         "all_time_pct": 9.75, "all_time_cad": 5168.00, "fx_usd_cad": 1.4198},
+    ]
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def get(self, url, headers=None):
+            if "/portfolio_snapshots?" in url:
+                return _CapResp(snapshots_resp)
+            if "snapshot_id=eq.12" in url:
+                return _CapResp([{"ticker": "MU.NE", "account": "CAD",
+                                  "shares": 29, "avg_price": 38.09,
+                                  "price": 47.05, "day_change_pct": 0.92,
+                                  "day_change_cad": 12.4, "value_cad": 1364.45,
+                                  "return_pct": 23.52, "return_cad": 260.4}])
+            assert "snapshot_id=eq.15&order=value_cad.desc" in url
+            return _CapResp([{"ticker": "KILO-B.TO", "account": "CAD",
+                              "shares": 87, "avg_price": 65.58,
+                              "price": 70.06, "day_change_pct": 0.20,
+                              "day_change_cad": 12.18, "value_cad": 6095.22,
+                              "return_pct": 6.83, "return_cad": 389.76}])
+
+    fake_httpx = types.ModuleType("httpx")
+    fake_httpx.Client = FakeClient
+    monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
+
+    snap = brief.fetch_remote_portfolio_snapshot()
+    assert snap is not None
+    assert snap["net_worth"] == pytest.approx(58152.63)
+    assert snap["cash"] == pytest.approx(27118.17)
+    assert snap["all_time_cad"] == pytest.approx(5168.00)
+    assert snap["rows"][0]["ticker"] == "KILO-B.TO"

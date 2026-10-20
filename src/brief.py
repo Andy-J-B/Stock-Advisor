@@ -1020,6 +1020,48 @@ def _load_portfolio_snapshot(client, rest_url, headers) -> dict | None:
     return None
 
 
+def _remote_baseline_from_history(client, rest_url, headers) -> tuple[float, float] | None:
+    """Recover (cash_cad, initial_cad) from the last trustworthy snapshot row.
+
+    ``portfolio_accounts`` can be empty in Supabase while ``portfolio_holdings``
+    is populated (e.g. an older sync, or a runner whose local DB had positions
+    but the accounts mirror never landed). Without initial_cash the all-time
+    return degrades to ``net_worth - 0``, which reported the whole portfolio as
+    an all-time gain (see 2026-09-25/28/29 snapshots: all_time_cad == net_worth).
+    The newest snapshot row with both cash and a real all-time figure is used
+    to back out the baseline: ``initial = net_worth - all_time_cad``.
+
+    Returns None when no usable history exists.
+    """
+    try:
+        resp = client.get(
+            f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO}"
+            "?select=run_date,net_worth_cad,cash_cad,all_time_cad"
+            "&order=run_date.desc&limit=20",
+            headers=headers,
+        )
+        resp.raise_for_status()
+    except Exception:
+        return None
+    for row in resp.json() or []:
+        cash = float(row.get("cash_cad") or 0.0)
+        net = float(row.get("net_worth_cad") or 0.0)
+        all_time = float(row.get("all_time_cad") or 0.0)
+        # A row with no cash or all_time == net_worth means the baseline was
+        # missing when it was written; such rows cannot seed a baseline.
+        if cash <= 0 or not net or all_time == 0.0 or all_time >= net:
+            continue
+        return cash, net - all_time
+    return None
+
+
+def _all_time(net_worth: float, initial: float) -> tuple[float, float]:
+    """(all_time_cad, all_time_pct) — never reports net worth as a gain."""
+    if initial <= 0:
+        return 0.0, 0.0
+    return net_worth - initial, (net_worth - initial) / initial * 100
+
+
 def _remote_derived_snapshot(client, rest_url, headers) -> dict | None:
     """Rebuild the current portfolio snapshot from the remote tables.
 
@@ -1027,6 +1069,9 @@ def _remote_derived_snapshot(client, rest_url, headers) -> dict | None:
     balances) and ``portfolio_holdings`` (shares + cost basis) synced by a
     local ``--persist``, fetches live prices, and computes the same dict shape
     as ``portfolio.snapshot()``. Returns None when nothing is mirrored yet.
+
+    When the accounts mirror is missing, the cash/initial baseline is recovered
+    from snapshot history so cash and all-time return stay accurate.
     """
     from src import data_client
 
@@ -1084,9 +1129,23 @@ def _remote_derived_snapshot(client, rest_url, headers) -> dict | None:
         grand["cash"] += float(a["cash"]) * multiplier
         grand["initial"] += float(a["initial_cash"]) * multiplier
 
+    # Holdings mirrored but accounts not: recover cash/initial from history.
+    if grand["initial"] <= 0:
+        baseline = _remote_baseline_from_history(client, rest_url, headers)
+        if baseline:
+            cash, initial = baseline
+            log.warning(
+                "portfolio_accounts has no initial_cash — recovered baseline "
+                "cash=%.2f initial=%.2f from snapshot history.",
+                cash, initial,
+            )
+            grand["cash"] = cash
+            grand["initial"] = initial
+
     net_worth = grand["value"] + grand["cash"]
     if not (rows or grand["cash"]):
         return None
+    all_time_cad, all_time_pct = _all_time(net_worth, grand["initial"])
     return {
         "rows": sorted(rows, key=lambda r: r["value_cad"], reverse=True),
         "net_worth": net_worth,
@@ -1101,10 +1160,8 @@ def _remote_derived_snapshot(client, rest_url, headers) -> dict | None:
         if grand["cost"]
         else 0.0,
         "return_cad": grand["value"] - grand["cost"],
-        "all_time_pct": (net_worth - grand["initial"]) / grand["initial"] * 100
-        if grand["initial"]
-        else 0.0,
-        "all_time_cad": net_worth - grand["initial"],
+        "all_time_pct": all_time_pct,
+        "all_time_cad": all_time_cad,
         "fx_usd_cad": fx,
     }
 
@@ -1215,8 +1272,16 @@ def _snapshot_from_last_remote_snapshot(client, rest_url, headers) -> dict | Non
             grand["cost"] += cost * mult
             grand["day_chg"] += day_chg * mult
         grand["cash"] = float(row.get("cash_cad") or grand["cash"])
-        # cash already in CAD from row; if USD account, row's cash is already CAD.
+        if grand["cash"] <= 0:
+            baseline = _remote_baseline_from_history(client, rest_url, headers)
+            if baseline:
+                grand["cash"] = baseline[0]
         net_worth = grand["value"] + grand["cash"]
+        if grand["initial"] <= 0:
+            grand["initial"] = float(row.get("net_worth_cad") or 0) - float(
+                row.get("all_time_cad") or 0
+            )
+        all_time_cad, all_time_pct = _all_time(net_worth, grand["initial"])
         return {
             "rows": sorted(rows, key=lambda r: r["value_cad"], reverse=True),
             "net_worth": net_worth,
@@ -1227,8 +1292,8 @@ def _snapshot_from_last_remote_snapshot(client, rest_url, headers) -> dict | Non
             "day_pct": (grand["day_chg"]/(grand["value"]-grand["day_chg"])*100) if (grand["value"]-grand["day_chg"])>0 else 0.0,
             "return_pct": (grand["value"]-grand["cost"])/grand["cost"]*100 if grand["cost"] else 0.0,
             "return_cad": grand["value"]-grand["cost"],
-            "all_time_pct": (net_worth - grand["initial"])/grand["initial"]*100 if grand["initial"] else float(row.get("all_time_pct") or 0.0),
-            "all_time_cad": net_worth - grand["initial"] if grand["initial"] else float(row.get("all_time_cad") or 0.0),
+            "all_time_pct": all_time_pct,
+            "all_time_cad": all_time_cad,
             "fx_usd_cad": fx,
         }
     return None
@@ -1413,8 +1478,10 @@ def fetch_remote_portfolio_snapshot() -> dict | None:
     so the email can still include portfolio status from the last ``--persist``.
     Reconstructs the same dict shape as ``portfolio.snapshot()`` from the
     normalized aggregate + ``portfolio_snapshot_items`` rows.
-    Skips empty $0 snapshots (e.g. 2026-09-25) and returns the most recent
-    snapshot that actually has holdings/cash.
+    Skips empty $0 snapshots (e.g. 2026-09-25) and snapshots written while the
+    ``portfolio_accounts`` mirror was missing (cash_cad == 0 and
+    all_time_cad == net_worth_cad, i.e. the whole net worth reported as an
+    all-time gain) so the email always shows real cash and P/L.
     """
     import httpx
 
@@ -1436,27 +1503,46 @@ def fetch_remote_portfolio_snapshot() -> dict | None:
             candidates = resp.json() or []
         if not candidates:
             return None
-        # Pick the most recent non-empty snapshot (skip $0 rows with no items)
-        row = None
-        for cand in candidates:
-            # If invested/cash both zero, verify it has items before using it
-            if not cand.get("invested_cad") and not cand.get("cash_cad"):
-                try:
-                    with httpx.Client(timeout=15) as c2:
-                        r = c2.get(
-                            f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO_ITEMS}"
-                            f"?select=ticker&snapshot_id=eq.{cand['id']}&limit=1",
-                            headers=headers,
-                        )
-                        r.raise_for_status()
-                        if not r.json():
-                            continue
-                except Exception:
-                    continue
-            row = cand
-            break
-        if row is None:
+
+        def _has_items(cand) -> bool:
+            try:
+                with httpx.Client(timeout=15) as c2:
+                    r = c2.get(
+                        f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO_ITEMS}"
+                        f"?select=ticker&snapshot_id=eq.{cand['id']}&limit=1",
+                        headers=headers,
+                    )
+                    r.raise_for_status()
+                    return bool(r.json())
+            except Exception:
+                return False
+
+        def _baseline_missing(cand) -> bool:
+            """Written without the accounts mirror: no cash and all-time == net worth."""
+            net = float(cand.get("net_worth_cad") or 0.0)
+            return (
+                net > 0
+                and float(cand.get("cash_cad") or 0.0) <= 0
+                and float(cand.get("all_time_cad") or 0.0) == net
+            )
+
+        non_empty = [
+            c for c in candidates
+            if c.get("invested_cad") or c.get("cash_cad") or _has_items(c)
+        ]
+        if not non_empty:
             return None
+        # Prefer a row written with a real cash/initial baseline; only fall back
+        # to baseline-less rows if none of the recent ones qualifies.
+        trusted = [c for c in non_empty if not _baseline_missing(c)]
+        row = (trusted or non_empty)[0]
+        if _baseline_missing(row):
+            log.warning(
+                "Latest portfolio snapshot (%s) has no cash baseline — showing "
+                "it anyway. Re-run `python main.py brief --persist` locally to "
+                "sync portfolio_accounts.",
+                row.get("run_date") or row.get("id"),
+            )
 
         # Items are fetched via a second request by snapshot id: embedding the
         # child table (SELECT *,items(*)) needs PostgREST's schema-cache to

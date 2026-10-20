@@ -236,3 +236,78 @@ create policy "allow update" on portfolio_accounts
     for update using (true) with check (true);
 create policy "allow delete" on portfolio_accounts
     for delete using (true);
+-- Enhanced schema additions
+create table if not exists price_bars_daily (
+    ticker      text not null,
+    date        date not null,
+    open        numeric,
+    high        numeric,
+    low         numeric,
+    close       numeric,
+    adj_close   numeric,
+    volume      bigint,
+    source      text default 'yfinance',
+    primary key (ticker, date)
+);
+create index if not exists idx_price_bars_daily_ticker_date on price_bars_daily (ticker, date);
+create index if not exists idx_price_bars_daily_date on price_bars_daily (date);
+
+create table if not exists position_performance_daily (
+    id               bigserial primary key,
+    account          text,
+    ticker           text not null,
+    date             date not null,
+    shares           numeric default 0,
+    price_close      numeric default 0,
+    value_local      numeric default 0,
+    value_cad        numeric default 0,
+    cost_basis_cad   numeric default 0,
+    unrealized_pnl_cad numeric default 0,
+    realized_pnl_cad numeric default 0,
+    day_pnl_cad      numeric default 0,
+    weight           numeric default 0,
+    unique (account, ticker, date)
+);
+create index if not exists idx_perf_daily_ticker_date on position_performance_daily (ticker, date);
+create index if not exists idx_perf_daily_date on position_performance_daily (date);
+
+create table if not exists recommendations (
+    id           uuid primary key default gen_random_uuid(),
+    run_id       bigint references brief_runs(id) on delete cascade,
+    ticker       text not null,
+    action       text,
+    score        numeric,
+    rationale    jsonb,
+    constraints  jsonb,
+    executed     boolean default false,
+    outcome_1d   jsonb,
+    outcome_7d   jsonb,
+    outcome_30d  jsonb,
+    created_at   timestamptz not null default now()
+);
+create index if not exists idx_recommendations_run_id on recommendations (run_id);
+create index if not exists idx_recommendations_ticker on recommendations (ticker);
+
+-- RLS for new tables
+alter table price_bars_daily              enable row level security;
+alter table position_performance_daily    enable row level security;
+alter table recommendations               enable row level security;
+
+create policy "allow read" on price_bars_daily for select using (true);
+create policy "allow read" on position_performance_daily for select using (true);
+create policy "allow read" on recommendations for select using (true);
+
+create policy "allow write" on price_bars_daily
+    for insert with check (true);
+create policy "allow update" on price_bars_daily
+    for update using (true) with check (true);
+
+create policy "allow write" on position_performance_daily
+    for insert with check (true);
+create policy "allow update" on position_performance_daily
+    for update using (true) with check (true);
+
+create policy "allow write" on recommendations
+    for insert with check (true);
+create policy "allow update" on recommendations
+    for update using (true) with check (true);

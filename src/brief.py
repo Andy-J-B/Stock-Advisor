@@ -425,6 +425,14 @@ def run_brief(
         market=market,
     )
     _enrich_run(run)
+    try:
+        persist_price_bars(tickers)
+    except Exception:
+        pass
+    try:
+        compute_and_store_recommendations(run)
+    except Exception:
+        pass
     return run
 
 
@@ -1654,3 +1662,49 @@ def notify_webhook(run: BriefRun, webhook_url: str | None = None) -> bool:
     except Exception as exc:
         log.error("Webhook notification failed: %s", exc)
         return False
+
+
+# ---------------------------------------------------------------------------
+# Price bar persistence
+# ---------------------------------------------------------------------------
+
+def persist_price_bars(tickers: list[str], period: str = "1y") -> int:
+    """Persist OHLCV price bars to SQLite for tracked tickers."""
+    try:
+        from src.services.portfolio_service import PortfolioService
+        svc = PortfolioService()
+        return svc.ensure_price_bars(tickers, period=period)
+    except Exception as exc:
+        log.warning("Could not persist price bars: %s", exc)
+        return 0
+
+
+def compute_and_store_recommendations(run: BriefRun) -> None:
+    """Store recommendations from brief into DB."""
+    try:
+        from src.database import init_db, Recommendation
+        init_db()
+        for s in run.scores:
+            action = "hold"
+            if s.composite >= 25 and not s.overexposed:
+                action = "add"
+            elif s.composite >= 25 and s.overexposed:
+                action = "hold"
+            elif s.composite <= -25 and s.portfolio_weight and s.portfolio_weight > 0:
+                action = "trim"
+            elif s.composite <= -25:
+                action = "sell"
+            rationale = {"reasoning": s.reasoning, "components": {"sentiment": s.sentiment, "technical": s.technical, "ml": s.ml_pred, "analyst": s.analyst}}
+            constraints = {"overexposed": s.overexposed, "portfolio_weight": s.portfolio_weight}
+            Recommendation.get_or_create(
+                ticker=s.ticker,
+                run_date=run.run_date,
+                defaults={
+                    "action": action,
+                    "score": s.composite,
+                    "rationale": str(rationale),
+                    "constraints": str(constraints),
+                },
+            )
+    except Exception as exc:
+        log.warning("Could not store recommendations: %s", exc)

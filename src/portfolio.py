@@ -137,6 +137,7 @@ def ensure_account_exists(portfolio_data: dict, account_name: str) -> tuple[dict
 def set_initial_cash(account: str, amount: float):
     Account.get_or_create(name=account.upper(), defaults={"cash": 0.0, "initial_cash": 0.0})
     Account.update(initial_cash=float(amount)).where(Account.name == account.upper()).execute()
+    _auto_sync_portfolio()
 
 
 def deposit_cash(amount: float, currency: str) -> tuple[float, float]:
@@ -145,9 +146,11 @@ def deposit_cash(amount: float, currency: str) -> tuple[float, float]:
         rate = data_client.get_usd_to_cad()
         converted = amount * rate
         Account.update(cash=Account.cash + converted).where(Account.name == "CAD").execute()
+        _auto_sync_portfolio()
         return converted, rate
     else:
         Account.update(cash=Account.cash + amount).where(Account.name == "CAD").execute()
+        _auto_sync_portfolio()
         return amount, 1.0
 
 
@@ -179,6 +182,7 @@ def sell_position(account: str, ticker: str, shares: float, price: float) -> tup
         holding.save()
 
     Account.update(cash=Account.cash + final_proceeds).where(Account.name == "CAD").execute()
+    _auto_sync_portfolio()
 
     return final_proceeds, rate
 
@@ -186,6 +190,7 @@ def sell_position(account: str, ticker: str, shares: float, price: float) -> tup
 def update_cash(account: str, amount: float):
     Account.get_or_create(name=account.upper(), defaults={"cash": 0.0, "initial_cash": 0.0})
     Account.update(cash=float(amount)).where(Account.name == account.upper()).execute()
+    _auto_sync_portfolio()
 
 
 def get_cash(account: str) -> float:
@@ -194,6 +199,15 @@ def get_cash(account: str) -> float:
         return acc.cash
     except Account.DoesNotExist:
         return 0.0
+
+
+def _auto_sync_portfolio():
+    try:
+        from src import brief
+        run = brief.run_brief(fetch_market=False)
+        brief.persist_to_supabase(run)
+    except Exception:
+        pass
 
 
 def add_position(account: str, ticker: str, shares: float, price: float):
@@ -215,6 +229,7 @@ def add_position(account: str, ticker: str, shares: float, price: float):
 
     proceeds = shares * price
     Account.update(cash=Account.cash - proceeds).where(Account.name == account).execute()
+    _auto_sync_portfolio()
 
 
 def remove_position(account: str, ticker: str, shares: Optional[float] = None):
@@ -236,6 +251,7 @@ def remove_position(account: str, ticker: str, shares: Optional[float] = None):
     else:
         holding.shares -= shares
         holding.save()
+    _auto_sync_portfolio()
 
 
 def get_account_holdings(account: str) -> dict:

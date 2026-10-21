@@ -11,7 +11,10 @@ from src import setup, portfolio, advisor, config, data_client, __version__
 from src import risk, indicators, optimizer, features, ml_model, anomaly, ticker_map
 from src import screener, brief, newsletter
 from src.database import (
-    get_watchlist, add_to_watchlist, remove_from_watchlist, init_db,
+    get_watchlist,
+    add_to_watchlist,
+    remove_from_watchlist,
+    init_db,
 )
 
 load_dotenv()
@@ -27,7 +30,9 @@ console = Console()
 @app.callback(invoke_without_command=True)
 def main_setup(
     ctx: typer.Context,
-    version: bool = typer.Option(False, "--version", "-V", help="Show version and exit.", is_eager=True),
+    version: bool = typer.Option(
+        False, "--version", "-V", help="Show version and exit.", is_eager=True
+    ),
 ):
     if version:
         console.print(f"Stock Advisor v{__version__}")
@@ -47,6 +52,7 @@ def main_setup(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _confirm(msg: str) -> bool:
     return typer.confirm(f"[yellow]{msg}[/yellow]", default=False)
@@ -69,7 +75,9 @@ def _colorize(val: float, fmt: str) -> str:
     return f"[{color}]{fmt.format(val)}[/{color}]"
 
 
-def _build_holding_row(ticker: str, shares: float, avg_price: float, live_price: float, prev_close: float):
+def _build_holding_row(
+    ticker: str, shares: float, avg_price: float, live_price: float, prev_close: float
+):
     cost = shares * avg_price
     value = shares * live_price
     diff = value - cost
@@ -121,7 +129,9 @@ def _build_account_table(acc_name: str, multiplier: float):
     return table
 
 
-def _print_account_summary(cash: float, initial_cash: float, cost: float, value: float, day_chg: float):
+def _print_account_summary(
+    cash: float, initial_cash: float, cost: float, value: float, day_chg: float
+):
     ret_dol = value - cost
     ret_pct = (ret_dol / cost * 100) if cost > 0 else 0
     prev_value = value - day_chg
@@ -130,13 +140,27 @@ def _print_account_summary(cash: float, initial_cash: float, cost: float, value:
     all_time_dol = total_val - initial_cash
     all_time_pct = (all_time_dol / initial_cash * 100) if initial_cash > 0 else 0
 
-    console.print(f"  [bold]Initial Investment:[/bold]  [white]{_dol_str(initial_cash)}[/white]")
-    console.print(f"  [bold]Invested in Stocks:[/bold]  [white]{_dol_str(cost)}[/white]")
-    console.print(f"  [bold]Cash Balance:[/bold]        [white]{_dol_str(cash)}[/white]")
-    console.print(f"  [bold]Today's Return:[/bold]      {_colorize(day_chg, '{:,.2f}')} ({_colorize(day_pct, '{:+.2f}%')})")
-    console.print(f"  [bold]Holdings P/L:[/bold]        {_colorize(ret_dol, '{:,.2f}')} ({_colorize(ret_pct, '{:+.2f}%')})")
-    console.print(f"  [bold]All-Time Return:[/bold]     {_colorize(all_time_dol, '{:,.2f}')} ({_colorize(all_time_pct, '{:+.2f}%')})")
-    console.print(f"  [bold]Total Account Value:[/bold] [cyan]{_dol_str(total_val)}[/cyan]\n")
+    console.print(
+        f"  [bold]Initial Investment:[/bold]  [white]{_dol_str(initial_cash)}[/white]"
+    )
+    console.print(
+        f"  [bold]Invested in Stocks:[/bold]  [white]{_dol_str(cost)}[/white]"
+    )
+    console.print(
+        f"  [bold]Cash Balance:[/bold]        [white]{_dol_str(cash)}[/white]"
+    )
+    console.print(
+        f"  [bold]Today's Return:[/bold]      {_colorize(day_chg, '{:,.2f}')} ({_colorize(day_pct, '{:+.2f}%')})"
+    )
+    console.print(
+        f"  [bold]Holdings P/L:[/bold]        {_colorize(ret_dol, '{:,.2f}')} ({_colorize(ret_pct, '{:+.2f}%')})"
+    )
+    console.print(
+        f"  [bold]All-Time Return:[/bold]     {_colorize(all_time_dol, '{:,.2f}')} ({_colorize(all_time_pct, '{:+.2f}%')})"
+    )
+    console.print(
+        f"  [bold]Total Account Value:[/bold] [cyan]{_dol_str(total_val)}[/cyan]\n"
+    )
 
     return {
         "value_cad": value,
@@ -154,15 +178,34 @@ def _print_global_summary(grand: dict):
     day_pct = (grand["day_chg"] / prev * 100) if prev > 0 else 0
     net_worth = grand["value"] + grand["cash"]
     all_time_dol = net_worth - grand["initial"]
-    all_time_pct = (all_time_dol / grand["initial"] * 100) if grand["initial"] > 0 else 0
+    all_time_pct = (
+        (all_time_dol / grand["initial"] * 100) if grand["initial"] > 0 else 0
+    )
 
-    t = Table(show_header=False, border_style="bright_blue", title="[bold blue]GLOBAL PORTFOLIO SUMMARY (CAD)[/bold blue]")
+    t = Table(
+        show_header=False,
+        border_style="bright_blue",
+        title="[bold blue]GLOBAL PORTFOLIO SUMMARY (CAD)[/bold blue]",
+    )
     t.add_row("Total Initial Invested", _dol_str(grand["initial"]))
-    t.add_row("Total Invested in Stocks", f"[bold white]{_dol_str(grand['cost'])}[/bold white]")
+    t.add_row(
+        "Total Invested in Stocks",
+        f"[bold white]{_dol_str(grand['cost'])}[/bold white]",
+    )
     t.add_row("Total Combined Cash", _dol_str(grand["cash"]))
-    t.add_row("Today's Return", _colorize(grand["day_chg"], "{:,.2f}") + f" ({_colorize(day_pct, '{:+.2f}%')})")
-    t.add_row("Stocks P/L", _colorize(ret_dol, "{:,.2f}") + f" ({_colorize(ret_pct, '{:+.2f}%')})")
-    t.add_row("All-Time Global Return", _colorize(all_time_dol, "{:,.2f}") + f" ({_colorize(all_time_pct, '{:+.2f}%')})")
+    t.add_row(
+        "Today's Return",
+        _colorize(grand["day_chg"], "{:,.2f}") + f" ({_colorize(day_pct, '{:+.2f}%')})",
+    )
+    t.add_row(
+        "Stocks P/L",
+        _colorize(ret_dol, "{:,.2f}") + f" ({_colorize(ret_pct, '{:+.2f}%')})",
+    )
+    t.add_row(
+        "All-Time Global Return",
+        _colorize(all_time_dol, "{:,.2f}")
+        + f" ({_colorize(all_time_pct, '{:+.2f}%')})",
+    )
     t.add_row("NET WORTH", f"[bold cyan]{_dol_str(net_worth)}[/bold cyan]")
     console.print(Panel(t, expand=False))
 
@@ -170,6 +213,7 @@ def _print_global_summary(grand: dict):
 # ---------------------------------------------------------------------------
 # Commands – Portfolio Management
 # ---------------------------------------------------------------------------
+
 
 @app.command()
 def deposit(
@@ -240,13 +284,17 @@ def view_portfolio(
     accounts = current_portfolio.get("accounts", {})
 
     if not accounts:
-        console.print("[yellow]No accounts found. Use 'add-stock' to get started.[/yellow]")
+        console.print(
+            "[yellow]No accounts found. Use 'add-stock' to get started.[/yellow]"
+        )
         return
 
     with console.status("[bold green]Fetching live exchange rates...[/bold green]"):
         fx_rate = data_client.get_usd_to_cad()
 
-    accounts_to_show = [account.upper()] if account.upper() != "ALL" else list(accounts.keys())
+    accounts_to_show = (
+        [account.upper()] if account.upper() != "ALL" else list(accounts.keys())
+    )
 
     # Collect all tickers across accounts we'll show
     all_tickers: list[str] = []
@@ -340,19 +388,34 @@ def update_cash_cmd(
 @app.command()
 def remove_stock(
     ticker: str,
-    shares: float = typer.Option(None, "--shares", "-s", help="Number of shares to remove (omit to remove entire position)"),
-    account: str = typer.Option("USD", "--account", "-a", help="Account to remove from (e.g., USD, CAD)"),
+    shares: float = typer.Option(
+        None,
+        "--shares",
+        "-s",
+        help="Number of shares to remove (omit to remove entire position)",
+    ),
+    account: str = typer.Option(
+        "USD", "--account", "-a", help="Account to remove from (e.g., USD, CAD)"
+    ),
 ):
     """Remove a stock position (or partial shares) from your portfolio."""
-    label = f"Remove entire position of {ticker.upper()}" if not shares else f"Remove {shares} shares of {ticker.upper()}"
+    label = (
+        f"Remove entire position of {ticker.upper()}"
+        if not shares
+        else f"Remove {shares} shares of {ticker.upper()}"
+    )
     if not _confirm(f"{label} from {account.upper()}?"):
         raise typer.Exit()
     try:
         portfolio.remove_position(account, ticker, shares)
         if shares:
-            console.print(f"[bold green]Removed {shares} shares of {ticker.upper()} from {account.upper()}.[/bold green]")
+            console.print(
+                f"[bold green]Removed {shares} shares of {ticker.upper()} from {account.upper()}.[/bold green]"
+            )
         else:
-            console.print(f"[bold green]Removed entire position of {ticker.upper()} from {account.upper()}.[/bold green]")
+            console.print(
+                f"[bold green]Removed entire position of {ticker.upper()} from {account.upper()}.[/bold green]"
+            )
     except ValueError as e:
         console.print(f"[red]Error: {e}[/red]")
 
@@ -360,6 +423,7 @@ def remove_stock(
 # ---------------------------------------------------------------------------
 # Commands – Analysis & Advice
 # ---------------------------------------------------------------------------
+
 
 @app.command()
 def analyze():
@@ -376,7 +440,9 @@ def analyze():
     )
 
     if not has_assets:
-        console.print("[yellow]Please add stocks or cash to your portfolio first![/yellow]")
+        console.print(
+            "[yellow]Please add stocks or cash to your portfolio first![/yellow]"
+        )
         return
 
     with console.status("[bold cyan]Consulting AI Advisor...[/bold cyan]"):
@@ -413,7 +479,9 @@ def analyze():
 
     risk_table.add_row("Sharpe Ratio", f"{risk.sharpe_ratio(port_daily):.2f}")
     risk_table.add_row("Sortino Ratio", f"{risk.sortino_ratio(port_daily):.2f}")
-    risk_table.add_row("Max Drawdown", f"{risk.max_drawdown(close_df.mean(axis=1)):.2%}")
+    risk_table.add_row(
+        "Max Drawdown", f"{risk.max_drawdown(close_df.mean(axis=1)):.2%}"
+    )
     risk_table.add_row("VaR (95%)", f"{risk.historical_var(port_daily):.2%}")
     risk_table.add_row("CVaR (95%)", f"{risk.cvar(port_daily):.2%}")
     console.print(risk_table)
@@ -444,11 +512,15 @@ def analyze():
 @app.command("optimize-portfolio")
 def optimize_portfolio(
     objective: str = typer.Option(
-        "max-sharpe", "--objective", "-o",
+        "max-sharpe",
+        "--objective",
+        "-o",
         help="Optimization objective: max-sharpe, min-volatility, efficient-risk",
     ),
     target_volatility: float = typer.Option(
-        0.2, "--target-volatility", "-t",
+        0.2,
+        "--target-volatility",
+        "-t",
         help=(
             "Target annualized volatility as a decimal (e.g. 0.10 = 10%, "
             "0.20 = 20%, 0.50 = 50%). Typical target range: 0.10–0.30. "
@@ -478,25 +550,35 @@ def optimize_portfolio(
     if dupes:
         for us in dupes:
             originals = [t for t, u in zip(tickers, us_tickers) if u == us]
-            console.print(f"[yellow]Warning: {', '.join(originals)} all map to {us}; using a single price series.[/yellow]")
+            console.print(
+                f"[yellow]Warning: {', '.join(originals)} all map to {us}; using a single price series.[/yellow]"
+            )
 
     with console.status("[bold green]Fetching price history...[/bold green]"):
         close_df = data_client.get_close_prices(us_tickers, period="1y", min_rows=30)
 
     if close_df.empty:
-        console.print("[yellow]Not enough price history (need ~30+ trading days).[/yellow]")
+        console.print(
+            "[yellow]Not enough price history (need ~30+ trading days).[/yellow]"
+        )
         return
 
     skipped = [t for t, us in zip(tickers, us_tickers) if us not in close_df.columns]
     if skipped:
-        console.print(f"[yellow]Skipped (insufficient history <30d): {', '.join(skipped)}[/yellow]")
+        console.print(
+            f"[yellow]Skipped (insufficient history <30d): {', '.join(skipped)}[/yellow]"
+        )
 
     if close_df.shape[1] < 2:
-        console.print("[yellow]Need at least 2 tickers with sufficient history to optimize.[/yellow]")
+        console.print(
+            "[yellow]Need at least 2 tickers with sufficient history to optimize.[/yellow]"
+        )
         return
 
     if close_df.shape[0] < 30:
-        console.print("[yellow]Not enough price history (need ~30+ trading days).[/yellow]")
+        console.print(
+            "[yellow]Not enough price history (need ~30+ trading days).[/yellow]"
+        )
         return
 
     # Map resolved US columns back to the original portfolio tickers for display.
@@ -510,7 +592,10 @@ def optimize_portfolio(
         raise typer.Exit()
 
     # Weights table
-    wt = Table(title=f"[bold]Optimal Allocation ({objective})[/bold]", border_style="bright_green")
+    wt = Table(
+        title=f"[bold]Optimal Allocation ({objective})[/bold]",
+        border_style="bright_green",
+    )
     wt.add_column("Ticker", style="cyan")
     wt.add_column("Weight", justify="right")
     for t, w in sorted(result["weights"].items(), key=lambda x: -x[1]):
@@ -518,7 +603,9 @@ def optimize_portfolio(
             wt.add_row(t, f"{w:.1%}")
     console.print(wt)
 
-    console.print(f"  Expected annual return: [green]{result['expected_return']:.1%}[/green]")
+    console.print(
+        f"  Expected annual return: [green]{result['expected_return']:.1%}[/green]"
+    )
     console.print(f"  Annual volatility:      {result['volatility']:.1%}")
     console.print(f"  Sharpe ratio:           [bold]{result['sharpe']:.2f}[/bold]")
 
@@ -529,12 +616,16 @@ def optimize_portfolio(
 
     with console.status("[bold green]Computing share allocation...[/bold green]"):
         try:
-            alloc = optimizer.discrete_allocation(result["weights"], close_df, total_cash)
+            alloc = optimizer.discrete_allocation(
+                result["weights"], close_df, total_cash
+            )
         except Exception:
             return
 
     if alloc["allocations"]:
-        at = Table(title=f"[bold]Discrete Allocation (${total_cash:,.0f} available)[/bold]")
+        at = Table(
+            title=f"[bold]Discrete Allocation (${total_cash:,.0f} available)[/bold]"
+        )
         at.add_column("Ticker", style="cyan")
         at.add_column("Shares", justify="right")
         at.add_column("Approx Cost", justify="right")
@@ -560,7 +651,9 @@ def predict(
 ):
     """Predict next-day/week directional movement for a ticker."""
     ticker = ticker.upper()
-    console.print(f"[bold blue]Predicting {ticker} ({horizon}-day horizon)...[/bold blue]")
+    console.print(
+        f"[bold blue]Predicting {ticker} ({horizon}-day horizon)...[/bold blue]"
+    )
 
     # Fetch price history
     with console.status("[bold green]Fetching price history...[/bold green]"):
@@ -589,16 +682,23 @@ def predict(
         y_train = target.loc[mask]
 
         if len(X_train) < 30:
-            console.print("[red]Not enough labeled data to train (need 30+ rows).[/red]")
+            console.print(
+                "[red]Not enough labeled data to train (need 30+ rows).[/red]"
+            )
             raise typer.Exit()
 
         with console.status("[bold green]Training LightGBM...[/bold green]"):
             result = ml_model.train(X_train, y_train)
 
-        ml_model.save_model(result["model"], ticker, horizon, metadata={
-            "cv_accuracy": result["cv_accuracy"],
-            "n_train": result["n_train"],
-        })
+        ml_model.save_model(
+            result["model"],
+            ticker,
+            horizon,
+            metadata={
+                "cv_accuracy": result["cv_accuracy"],
+                "n_train": result["n_train"],
+            },
+        )
         console.print(
             f"  CV accuracy: [bold]{result['cv_accuracy']:.1%}[/bold] "
             f"(walk-forward, {len(result['fold_accuracies'])} folds)"
@@ -711,7 +811,9 @@ def portfolio_news():
             mapped_parts.append(f"{t} (→ {us})")
         else:
             mapped_parts.append(t)
-    console.print(f"Fetching news for: [bold cyan]{', '.join(mapped_parts)}[/bold cyan]\n")
+    console.print(
+        f"Fetching news for: [bold cyan]{', '.join(mapped_parts)}[/bold cyan]\n"
+    )
 
     # Fetch news using US tickers for better coverage
     us_tickers = [ticker_us_map.get(t.upper(), t) for t in tickers]
@@ -730,7 +832,9 @@ def portfolio_news():
                 fb_news = data_client.get_ticker_news(fb_ticker, limit=5)
                 if fb_news:
                     news = fb_news
-                    console.print(f"  [dim]No direct news — showing {label} market news instead[/dim]")
+                    console.print(
+                        f"  [dim]No direct news — showing {label} market news instead[/dim]"
+                    )
 
         advice, headline_scores = advisor.analyze_ticker_sentiment(ticker, news)
         console.print(f"[bold]{ticker} Update:[/bold] {advice}")
@@ -750,12 +854,8 @@ def portfolio_news():
                     f"{sc['compound']:+.2f}",
                 )
             if len(headline_scores) > 1:
-                avg = sum(s["compound"] for s in headline_scores) / len(
-                    headline_scores
-                )
-                st.add_row(
-                    "[dim]Aggregate[/dim]", "", f"[bold]{avg:+.2f}[/bold]"
-                )
+                avg = sum(s["compound"] for s in headline_scores) / len(headline_scores)
+                st.add_row("[dim]Aggregate[/dim]", "", f"[bold]{avg:+.2f}[/bold]")
             console.print(st)
 
         console.print("-" * 40)
@@ -778,11 +878,17 @@ def settings(
     current_alloc = current.get("risk_allocation", {})
 
     if any(x is not None for x in [conservative, moderate, aggressive]):
-        c = conservative if conservative is not None else current_alloc.get("conservative", 0)
+        c = (
+            conservative
+            if conservative is not None
+            else current_alloc.get("conservative", 0)
+        )
         m = moderate if moderate is not None else current_alloc.get("moderate", 100)
         a = aggressive if aggressive is not None else current_alloc.get("aggressive", 0)
 
-        specified = sum(1 for x in [conservative, moderate, aggressive] if x is not None)
+        specified = sum(
+            1 for x in [conservative, moderate, aggressive] if x is not None
+        )
         if specified == 2:
             if conservative is None:
                 c = 100 - m - a
@@ -792,9 +898,9 @@ def settings(
                 a = 100 - c - m
         elif specified == 1:
             user_val = (
-                conservative if conservative is not None
-                else moderate if moderate is not None
-                else aggressive
+                conservative
+                if conservative is not None
+                else moderate if moderate is not None else aggressive
             )
             remaining = 100 - user_val
             split = remaining // 2
@@ -807,7 +913,9 @@ def settings(
 
         total = c + m + a
         if total != 100:
-            console.print(f"[red]Error: Your allocation totals {total}%. It must equal exactly 100%.[/red]")
+            console.print(
+                f"[red]Error: Your allocation totals {total}%. It must equal exactly 100%.[/red]"
+            )
             raise typer.Exit(code=1)
 
         config.update_allocation(c, m, a)
@@ -830,7 +938,9 @@ def settings(
 def research(ticker: str):
     """Get a deep-dive analyst report and action plan for a specific stock."""
     current_portfolio = portfolio.load()
-    with console.status(f"[bold cyan]Performing Ultimate Deep-Dive for {ticker.upper()}...[/bold cyan]"):
+    with console.status(
+        f"[bold cyan]Performing Ultimate Deep-Dive for {ticker.upper()}...[/bold cyan]"
+    ):
         data_md, report_md = advisor.generate_stock_report(ticker, current_portfolio)
 
     console.print(
@@ -852,6 +962,7 @@ def research(ticker: str):
 # ---------------------------------------------------------------------------
 # Commands – New Features (P3)
 # ---------------------------------------------------------------------------
+
 
 @app.command()
 def export(
@@ -897,13 +1008,16 @@ def dividends():
                     annual = div * data["shares"]
                     total_projected += annual
                     table.add_row(
-                        ticker, str(data["shares"]),
+                        ticker,
+                        str(data["shares"]),
                         f"{div_yield*100:.2f}%" if div_yield else "N/A",
                         f"${annual:,.2f}",
                     )
 
     console.print(table)
-    console.print(f"\n[bold]Total Projected Annual Income:[/bold] [green]${total_projected:,.2f}[/green]")
+    console.print(
+        f"\n[bold]Total Projected Annual Income:[/bold] [green]${total_projected:,.2f}[/green]"
+    )
 
 
 @app.command()
@@ -924,28 +1038,35 @@ def rebalance():
     with console.status("[bold cyan]Generating rebalancing suggestions...[/bold cyan]"):
         suggestions = advisor.evaluate_portfolio(current_portfolio, user_settings)
 
-    console.print(Panel(suggestions, title="🧹 Rebalancing Suggestions", border_style="green"))
+    console.print(
+        Panel(suggestions, title="🧹 Rebalancing Suggestions", border_style="green")
+    )
 
 
 @app.command("top-buys")
 def top_buys(
     universe: str = typer.Option(
-        "sp500", "--universe", "-u",
+        "sp500",
+        "--universe",
+        "-u",
         help="Universe(s) to screen, comma-separated: sp500, tsx60 (or use --tickers for a custom list).",
     ),
     limit: int = typer.Option(
         10, "--limit", "-l", help="How many top picks to show (default: 10)."
     ),
     tickers: str = typer.Option(
-        None, "--tickers", "-t",
+        None,
+        "--tickers",
+        "-t",
         help="Comma-separated tickers to screen instead of a universe (e.g. MSFT,NVDA,RY.TO).",
     ),
     min_analysts: int = typer.Option(
         3, "--min-analysts", help="Minimum analyst coverage to consider a pick."
     ),
     deep: bool = typer.Option(
-        True, "--deep/--no-deep",
-        help="Generate an AI deep-dive (\"why buy now\") for the top picks.",
+        True,
+        "--deep/--no-deep",
+        help='Generate an AI deep-dive ("why buy now") for the top picks.',
     ),
 ):
     """Screen for stocks analysts love right now (strong buys with upside)."""
@@ -962,7 +1083,9 @@ def top_buys(
             raise typer.Exit()
 
     if not picks:
-        console.print("[yellow]No net-bullish picks found for the current screen.[/yellow]")
+        console.print(
+            "[yellow]No net-bullish picks found for the current screen.[/yellow]"
+        )
         return
 
     table = Table(
@@ -1000,13 +1123,20 @@ def top_buys(
         with console.status("[bold magenta]Researching top picks...[/bold magenta]"):
             narrative = screener.deep_dive(picks)
         if narrative:
-            console.print(Panel(narrative, title="🧠 Deep-Dive: Why These Are Buys Now", border_style="bright_magenta"))
+            console.print(
+                Panel(
+                    narrative,
+                    title="🧠 Deep-Dive: Why These Are Buys Now",
+                    border_style="bright_magenta",
+                )
+            )
 
 
 @app.command()
 def tui():
     """Launch the Textual Terminal UI dashboard."""
     from tui import StockDashboard
+
     StockDashboard().run()
 
 
@@ -1014,10 +1144,13 @@ def tui():
 # Commands – Watchlist
 # ---------------------------------------------------------------------------
 
+
 @app.command()
 def watchlist(
     action: str = typer.Argument("show", help="show, add, or remove"),
-    ticker: str = typer.Option(None, "--ticker", "-t", help="Ticker(s) to add/remove, comma-separated"),
+    ticker: str = typer.Option(
+        None, "--ticker", "-t", help="Ticker(s) to add/remove, comma-separated"
+    ),
 ):
     """Manage your watchlist (tickers you want to track but don't own)."""
     if action == "add":
@@ -1032,7 +1165,9 @@ def watchlist(
             if added:
                 console.print(f"[green]Added {t.upper()} to watchlist.[/green]")
             else:
-                console.print(f"[yellow]{t.upper()} is already on the watchlist.[/yellow]")
+                console.print(
+                    f"[yellow]{t.upper()} is already on the watchlist.[/yellow]"
+                )
 
     elif action == "remove":
         if not ticker:
@@ -1053,7 +1188,9 @@ def watchlist(
         init_db()
         wl = get_watchlist()
         if not wl:
-            console.print("[yellow]Watchlist is empty. Use 'watchlist add --ticker AAPL'.[/yellow]")
+            console.print(
+                "[yellow]Watchlist is empty. Use 'watchlist add --ticker AAPL'.[/yellow]"
+            )
             return
 
         table = Table(title="Watchlist", border_style="cyan")
@@ -1082,22 +1219,31 @@ def _maybe_sync_watchlist() -> None:
 # Commands – Brief
 # ---------------------------------------------------------------------------
 
+
 @app.command("brief")
 def brief_cmd(
     tickers: str = typer.Option(
-        None, "--tickers", "-t",
+        None,
+        "--tickers",
+        "-t",
         help="Comma-separated tickers to score (default: holdings + watchlist).",
     ),
     persist: bool = typer.Option(
-        False, "--persist", "-p",
+        False,
+        "--persist",
+        "-p",
         help="Persist results to Supabase Postgres (requires DATABASE_URL).",
     ),
     notify: bool = typer.Option(
-        False, "--notify", "-n",
+        False,
+        "--notify",
+        "-n",
         help="Post summary to webhook (requires NOTIFY_WEBHOOK_URL).",
     ),
     workers: int = typer.Option(
-        5, "--workers", "-w",
+        5,
+        "--workers",
+        "-w",
         help="Parallel scoring threads.",
     ),
 ):
@@ -1154,7 +1300,9 @@ def brief_cmd(
             delta_cell += f" [dim]{arrow}{abs(s.rank_change)}[/dim]"
         new_marker = " [cyan]NEW[/cyan]" if s.new_entrant else ""
         price_cell = f"{s.price:,.2f}" if s.price else "[dim]—[/dim]"
-        pos_cell = f"{s.portfolio_weight:.1f}%" if s.portfolio_weight else "[dim]—[/dim]"
+        pos_cell = (
+            f"{s.portfolio_weight:.1f}%" if s.portfolio_weight else "[dim]—[/dim]"
+        )
 
         table.add_row(
             str(i),
@@ -1200,7 +1348,11 @@ def brief_cmd(
                 f"([bold]{s.score_delta:+.1f}[/bold] vs {run.prev_run_date})"
             )
         console.print(
-            Panel("\n".join(mover_lines), title="Biggest Movers", border_style="bright_blue")
+            Panel(
+                "\n".join(mover_lines),
+                title="Biggest Movers",
+                border_style="bright_blue",
+            )
         )
 
     # Anomaly flips + new entrants/exits
@@ -1211,9 +1363,13 @@ def brief_cmd(
             + ", ".join(f"[red]{f['ticker']}[/red]" for f in run.anomaly_flips)
         )
     if run.new_entrants:
-        change_lines.append("New tickers: " + ", ".join(f"[cyan]{t}[/cyan]" for t in run.new_entrants))
+        change_lines.append(
+            "New tickers: " + ", ".join(f"[cyan]{t}[/cyan]" for t in run.new_entrants)
+        )
     if run.exits:
-        change_lines.append("Dropped since last run: " + ", ".join(f"[dim]{t}[/dim]" for t in run.exits))
+        change_lines.append(
+            "Dropped since last run: " + ", ".join(f"[dim]{t}[/dim]" for t in run.exits)
+        )
     if change_lines:
         console.print(
             Panel("\n".join(change_lines), title="Changes", border_style="bright_blue")
@@ -1246,7 +1402,9 @@ def brief_cmd(
             console.print("[green]Brief persisted to Supabase.[/green]")
             brief.sync_watchlist_to_supabase()
         else:
-            console.print("[red]Failed to persist — check DATABASE_REST_URL and SUPABASE_PUBLISHABLE_KEY.[/red]")
+            console.print(
+                "[red]Failed to persist — check DATABASE_REST_URL and SUPABASE_PUBLISHABLE_KEY.[/red]"
+            )
 
     # Notify
     if notify:
@@ -1254,12 +1412,15 @@ def brief_cmd(
         if ok:
             console.print("[green]Webhook notification sent.[/green]")
         else:
-            console.print("[yellow]Webhook notification failed or NOTIFY_WEBHOOK_URL not set.[/yellow]")
+            console.print(
+                "[yellow]Webhook notification failed or NOTIFY_WEBHOOK_URL not set.[/yellow]"
+            )
 
 
 # ---------------------------------------------------------------------------
 # Commands – Brief Weights
 # ---------------------------------------------------------------------------
+
 
 @app.command()
 def brief_weights(
@@ -1303,14 +1464,18 @@ def brief_weights(
 # Commands – Email Newsletter
 # ---------------------------------------------------------------------------
 
+
 @app.command("newsletter")
 def send_newsletter(
     send: bool = typer.Option(
-        True, "--send/--no-send",
+        True,
+        "--send/--no-send",
         help="Actually send the email (default). With --no-send, only write the HTML preview.",
     ),
     force_preview: bool = typer.Option(
-        False, "--preview", "-p",
+        False,
+        "--preview",
+        "-p",
         help="Force writing the HTML preview to data/ even when SMTP is configured.",
     ),
 ):
@@ -1326,6 +1491,32 @@ def send_newsletter(
         ok = newsletter.run_newsletter(send=send, preview=force_preview)
     if not ok:
         raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# Commands – AI Chat Advisor
+# ---------------------------------------------------------------------------
+
+
+@app.command(name="advisor-chat")
+def advisor_chat(
+    ticker: str = typer.Argument(..., help="Ticker to analyze (e.g., VISA.NE, AAPL)"),
+    question: str = typer.Option(
+        None, "--question", "-q", help="Specific question about the stock"
+    ),
+):
+    """AI chat advisor for buy/sell/hold recommendations on your positions."""
+    from src import chat_advisor
+
+    console.print(f"[bold blue]Analyzing {ticker.upper()}...[/bold blue]\n")
+    with console.status(
+        "[bold cyan]Gathering data and generating recommendation...[/bold cyan]"
+    ):
+        advice = chat_advisor.chat_advice(ticker, question)
+    console.print(advice)
+    console.print(
+        "\n[dim]Disclaimer: This is not financial advice. Consult a qualified advisor.[/dim]"
+    )
 
 
 if __name__ == "__main__":

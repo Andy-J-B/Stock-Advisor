@@ -1508,14 +1508,24 @@ def advisor_chat(
     """AI chat advisor for buy/sell/hold recommendations on your positions."""
     from src import chat_advisor
 
-    console.print(f"[bold blue]Analyzing {ticker.upper()}...[/bold blue]\n")
+    console.print(
+        Panel.fit(
+            f"[bold cyan]AI Advisor Chat[/bold cyan] | Analyzing [bold]{ticker.upper()}[/bold]",
+            border_style="cyan",
+        )
+    )
+    console.print()
     with console.status(
-        "[bold cyan]Gathering data and generating recommendation...[/bold cyan]"
+        "[bold cyan]Gathering position data, fundamentals & technicals...[/bold cyan]"
     ):
         advice = chat_advisor.chat_advice(ticker, question)
-    console.print(advice)
+    console.print(Markdown(advice))
+    console.print()
     console.print(
-        "\n[dim]Disclaimer: This is not financial advice. Consult a qualified advisor.[/dim]"
+        Panel.fit(
+            "[dim]This is not financial advice. Always do your own research and consult a qualified advisor.[/dim]",
+            border_style="dim",
+        )
     )
 
 

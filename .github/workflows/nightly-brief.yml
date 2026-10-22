@@ -63,6 +63,7 @@ jobs:
       - name: Send daily newsletter email
         run: python main.py newsletter
         env:
+          DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}
           DATABASE_REST_URL: ${{ secrets.SUPABASE_REST_URL }}
           SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

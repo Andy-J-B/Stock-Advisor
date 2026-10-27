@@ -8,6 +8,7 @@ from rich.table import Table
 from rich.panel import Panel
 from dotenv import load_dotenv
 from rich.markdown import Markdown
+from rich.prompt import Confirm
 from src import setup, portfolio, advisor, config, data_client, __version__
 from src import risk, indicators, optimizer, features, ml_model, anomaly, ticker_map
 from src import screener, brief, newsletter
@@ -56,7 +57,9 @@ def main_setup(
 
 
 def _confirm(msg: str) -> bool:
-    return typer.confirm(f"[yellow]{msg}[/yellow]", default=False)
+    # Use rich's Confirm (rich markup-aware) — typer.confirm routes through
+    # click's echo, which does not parse Rich markup like "[yellow]...[/yellow]".
+    return Confirm.ask(msg, default=False)
 
 
 def _price_color(diff: float) -> str:

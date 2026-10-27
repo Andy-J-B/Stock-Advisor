@@ -218,18 +218,23 @@ def _print_global_summary(grand: dict):
 @app.command()
 def deposit(
     amount: float,
+    account: str = typer.Option(
+        "CAD", "--account", "-a", help="Destination account (e.g., USD, CAD)"
+    ),
     currency: str = typer.Option("USD", "--currency", "-c", help="USD or CAD"),
 ):
-    """Deposit cash into your master CAD wallet (auto-converts USD)."""
+    """Deposit cash into an account (master CAD wallet auto-converts USD)."""
     with console.status("[bold green]Processing deposit...[/bold green]"):
-        final_amt, rate = portfolio.deposit_cash(amount, currency)
+        final_amt, rate = portfolio.deposit_cash(amount, currency, account)
 
-    if currency.upper() == "USD":
+    target_ccy = (account or "CAD").upper()
+    dep_ccy = (currency or "USD").upper()
+    if dep_ccy != target_ccy:
         console.print(
-            f"[green]Converted ${amount} USD to [bold]${final_amt:,.2f} CAD[/bold] (Rate: {rate:.4f})[/green]"
+            f"[green]Converted ${amount:,.2f} {dep_ccy} to [bold]${final_amt:,.2f} {target_ccy}[/bold] (Rate: {rate:.4f})[/green]"
         )
     else:
-        console.print(f"[green]Deposited ${final_amt:,.2f} CAD.[/green]")
+        console.print(f"[green]Deposited ${final_amt:,.2f} {target_ccy}.[/green]")
 
 
 @app.command()

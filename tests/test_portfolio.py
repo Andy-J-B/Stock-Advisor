@@ -175,6 +175,24 @@ def test_deposit_cash_multiple():
     assert portfolio.get_cash("CAD") == 800.0
 
 
+def test_deposit_cash_usd_account():
+    """Depositing USD into the USD portfolio should land without CAD conversion."""
+    with patch("src.portfolio.data_client.get_usd_to_cad", return_value=1.4):
+        amt, rate = portfolio.deposit_cash(1000, "USD", "USD")
+    assert amt == 1000.0
+    assert rate == 1.0
+    assert portfolio.get_cash("USD") == 1000.0
+
+
+def test_deposit_cash_usd_to_cad_default_account():
+    """Depositing USD without an account defaults to the master CAD wallet."""
+    with patch("src.portfolio.data_client.get_usd_to_cad", return_value=1.4):
+        amt, rate = portfolio.deposit_cash(1000, "USD")
+    assert amt == pytest.approx(1400.0)
+    assert rate == 1.4
+    assert portfolio.get_cash("CAD") == pytest.approx(1400.0)
+
+
 # ---------------------------------------------------------------------------
 # Sell position
 # ---------------------------------------------------------------------------

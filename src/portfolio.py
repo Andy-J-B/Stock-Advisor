@@ -140,18 +140,32 @@ def set_initial_cash(account: str, amount: float):
     _auto_sync_portfolio()
 
 
-def deposit_cash(amount: float, currency: str) -> tuple[float, float]:
-    Account.get_or_create(name="CAD", defaults={"cash": 0.0, "initial_cash": 0.0})
-    if currency.upper() == "USD":
+def deposit_cash(
+    amount: float, currency: str, account: str = "CAD"
+) -> tuple[float, float]:
+    """Deposit cash into an account (default: master CAD wallet).
+
+    USD deposits are auto-converted to CAD (at live rates) for CAD accounts;
+    USD-denominated accounts (e.g. the USD portfolio) accept USD directly.
+    Returns (final_amount_in_account_ccy, rate).
+    """
+    account = account.upper()
+    Account.get_or_create(name=account, defaults={"cash": 0.0, "initial_cash": 0.0})
+    dep_ccy = (currency or "USD").upper()
+
+    final_amt = amount
+    rate = 1.0
+    if account == "CAD" and dep_ccy == "USD":
         rate = data_client.get_usd_to_cad()
-        converted = amount * rate
-        Account.update(cash=Account.cash + converted).where(Account.name == "CAD").execute()
-        _auto_sync_portfolio()
-        return converted, rate
-    else:
-        Account.update(cash=Account.cash + amount).where(Account.name == "CAD").execute()
-        _auto_sync_portfolio()
-        return amount, 1.0
+        final_amt = amount * rate
+    elif account != "CAD" and dep_ccy == "CAD":
+        # Convert the deposited CAD into the account's (USD) denomination.
+        rate = data_client.get_usd_to_cad()
+        final_amt = amount / rate
+
+    Account.update(cash=Account.cash + final_amt).where(Account.name == account).execute()
+    _auto_sync_portfolio()
+    return final_amt, rate
 
 
 def sell_position(account: str, ticker: str, shares: float, price: float) -> tuple[float, float]:

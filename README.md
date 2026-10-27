@@ -64,7 +64,7 @@ Without `GEMINI_API_KEY`, commands fall back to locally-computed analysis.
 | ---------------------------------------------- | ------------------------------------------------- |
 | `add-stock TICKER SHARES PRICE --account USD`  | Add a position                                    |
 | `sell-stock TICKER SHARES PRICE --account USD` | Sell shares (proceeds auto-convert to CAD)        |
-| `deposit AMOUNT --currency USD`                | Deposit cash (auto-converts to CAD at live rates) |
+| `deposit AMOUNT --account USD --currency USD` | Deposit cash into an account (e.g., USD portfolio; auto-converts to CAD at live rates) |
 | `view-portfolio`                               | Show all accounts + global CAD summary            |
 | `remove-stock TICKER --account USD`            | Remove a holding                                  |
 | `set-initial AMOUNT --account USD`             | Set initial cash balance                          |

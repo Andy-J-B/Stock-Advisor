@@ -2,6 +2,7 @@ import csv
 import io
 import time
 import typer
+from typing import Optional
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -366,9 +367,15 @@ def add_stock(
     account: str = typer.Option(
         "USD", "--account", "-a", help="Account to add to (e.g., USD, CAD)"
     ),
+    currency: Optional[str] = typer.Option(
+        None,
+        "--currency",
+        "-c",
+        help="Purchase price currency (USD or CAD; defaults to the account's currency)",
+    ),
 ):
     """Add or update a stock in a specific account portfolio."""
-    portfolio.add_position(account, ticker, shares, price)
+    portfolio.add_position(account, ticker, shares, price, currency)
     console.print(
         f"[bold green]Successfully added {shares} shares of {ticker.upper()} at ${price:.2f} to your {account.upper()} account.[/bold green]"
     )

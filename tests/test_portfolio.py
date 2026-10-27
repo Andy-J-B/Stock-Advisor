@@ -113,6 +113,37 @@ def test_add_position_to_new_account():
     assert p["accounts"]["EUR"]["holdings"]["ABC"]["shares"] == 100
 
 
+def test_add_position_currency_defaults_to_account():
+    """Omitting currency should use the account's own denomination."""
+    portfolio.add_position("CAD", "VFV.TO", 5, 100.0)
+    p = portfolio.load()
+    assert p["accounts"]["CAD"]["holdings"]["VFV.TO"]["shares"] == 5
+
+
+def test_add_position_usd_to_usd_no_conversion():
+    """Adding USD to a USD account should debit USD cash directly."""
+    portfolio.update_cash("USD", 5000.0)
+    with patch("src.portfolio.data_client.get_usd_to_cad", return_value=1.4):
+        portfolio.add_position("USD", "AAPL", 10, 150.0, "USD")
+    assert portfolio.get_cash("USD") == 3500.0
+
+
+def test_add_position_usd_to_cad_converts():
+    """Adding USD-priced shares to a CAD account should convert to CAD cash."""
+    portfolio.update_cash("CAD", 10000.0)
+    with patch("src.portfolio.data_client.get_usd_to_cad", return_value=1.4):
+        portfolio.add_position("CAD", "AAPL", 10, 150.0, "USD")
+    assert portfolio.get_cash("CAD") == pytest.approx(10000.0 - 1500 * 1.4)
+
+
+def test_add_position_cad_to_usd_converts():
+    """Adding CAD-priced shares to a USD account should convert to USD cash."""
+    portfolio.update_cash("USD", 10000.0)
+    with patch("src.portfolio.data_client.get_usd_to_cad", return_value=1.4):
+        portfolio.add_position("USD", "AAPL", 10, 150.0, "CAD")
+    assert portfolio.get_cash("USD") == pytest.approx(10000.0 - 1500 / 1.4)
+
+
 # ---------------------------------------------------------------------------
 # Remove position
 # ---------------------------------------------------------------------------

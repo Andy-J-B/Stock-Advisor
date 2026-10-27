@@ -224,7 +224,9 @@ def _auto_sync_portfolio():
         pass
 
 
-def add_position(account: str, ticker: str, shares: float, price: float):
+def add_position(
+    account: str, ticker: str, shares: float, price: float, currency: Optional[str] = None
+):
     account = account.upper()
     ticker = ticker.upper()
     acc, _ = Account.get_or_create(name=account, defaults={"cash": 0.0, "initial_cash": 0.0})
@@ -242,6 +244,11 @@ def add_position(account: str, ticker: str, shares: float, price: float):
         holding.save()
 
     proceeds = shares * price
+    ccy = (currency or account).upper()
+    if ccy != account:
+        # Convert the purchase amount into the account's denomination.
+        rate = data_client.get_usd_to_cad()
+        proceeds = proceeds * rate if account == "CAD" else proceeds / rate
     Account.update(cash=Account.cash - proceeds).where(Account.name == account).execute()
     _auto_sync_portfolio()
 

@@ -62,7 +62,7 @@ Without `GEMINI_API_KEY`, commands fall back to locally-computed analysis.
 
 | Command                                        | Description                                       |
 | ---------------------------------------------- | ------------------------------------------------- |
-| `add-stock TICKER SHARES PRICE --account USD`  | Add a position                                    |
+| `add-stock TICKER SHARES PRICE --account USD --currency USD` | Add a position (debits account cash, converts if currencies differ) |
 | `sell-stock TICKER SHARES PRICE --account USD` | Sell shares (proceeds auto-convert to CAD)        |
 | `deposit AMOUNT --account USD --currency USD` | Deposit cash into an account (e.g., USD portfolio; auto-converts to CAD at live rates) |
 | `view-portfolio`                               | Show all accounts + global CAD summary            |

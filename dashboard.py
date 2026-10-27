@@ -97,12 +97,22 @@ with tabs[0]:
         snapshots_df = pd.read_sql(text("SELECT * FROM portfolio_snapshots ORDER BY run_date DESC LIMIT 30"), engine)
         if not snapshots_df.empty:
             latest = snapshots_df.iloc[0]
-            c1, c2, c3, c4, c5 = st.columns(5)
-            c1.metric("Net Worth (CAD)", f"${latest['net_worth_cad']:,.2f}")
+            current_nw = float(latest['net_worth_cad'] or 0)
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
+            c1.metric("Net Worth (CAD)", f"${current_nw:,.2f}")
             c2.metric("Invested", f"${latest['invested_cad']:,.2f}")
             c3.metric("Cash", f"${latest['cash_cad']:,.2f}")
             c4.metric("Day Change", f"${latest['day_change_cad']:+,.2f}", f"{latest.get('day_pct',0):+.2f}%")
             c5.metric("All-Time", f"{latest.get('all_time_pct',0):+.2f}%")
+            # Peak net worth across full snapshot history + compare vs current
+            peak_df = pd.read_sql(text("SELECT net_worth_cad FROM portfolio_snapshots"), engine)
+            peak_nw = float(peak_df['net_worth_cad'].max()) if not peak_df.empty else 0.0
+            if peak_nw > 0:
+                change_from_peak_pct = (current_nw - peak_nw) / peak_nw * 100
+                change_from_peak_amt = current_nw - peak_nw
+                c6.metric("Peak Net Worth (CAD)", f"${peak_nw:,.2f}", delta=f"{change_from_peak_pct:+.2f}%")
+                amt_str = f"+${abs(change_from_peak_amt):,.2f}" if change_from_peak_amt >= 0 else f"-${abs(change_from_peak_amt):,.2f}"
+                st.caption(f"Current vs peak: {change_from_peak_pct:+.2f}% ({amt_str})")
             if len(snapshots_df) > 1:
                 fig = go.Figure()
                 df_plot = snapshots_df.sort_values('run_date')

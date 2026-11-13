@@ -56,7 +56,7 @@ Without `GEMINI_API_KEY`, commands fall back to locally-computed analysis.
 | `market-update`      | Macro news sentiment + Isolation Forest anomaly detection on holdings                                     |
 | `portfolio-news`     | Per-ticker news sentiment with headline-level FinBERT breakdown                                           |
 | `research TICKER`    | Deep-dive analyst report on a single ticker via Gemini                                                    |
-| `top-buys`           | Screen S&P 500 / TSX 60 for high-conviction analyst buys with AI deep-dive                                |
+| `top-buys`           | Multi-factor buy screen (analysts, quality, valuation, growth, momentum, risk) + AI investment case      |
 
 ### Portfolio Management
 
@@ -90,6 +90,56 @@ Without `GEMINI_API_KEY`, commands fall back to locally-computed analysis.
 | `rebalance` | Suggest rebalancing trades to match target allocation                      |
 | `tui`       | Launch Textual terminal dashboard (holdings + net worth chart + AI report) |
 
+## How `top-buys` Works
+
+`top-buys` does **not** rank stocks by analyst target upside alone. It uses a
+two-stage funnel so a 500-name universe stays practical:
+
+1. **Cheap analyst pass** — pull consensus ratings and price targets for every
+   ticker; drop names with thin coverage, net-bearish ratings, or no upside.
+2. **Deep investigation** — for a candidate pool (default: 6× the requested
+   result count, minimum 50), pull fundamentals, one year of price history,
+   recommendation trends, and recent analyst rating/price-target revisions.
+   Only then is the final ranking produced.
+
+### Final score (0–100)
+
+| Pillar | Weight | What it measures | What earns a high score |
+|---|---|---|---|
+| Analyst conviction | 28% | Consensus, coverage, target confidence, revisions, upside | Many analysts rate it buy/strong buy, targets are rising and not widely dispersed, coverage is deep |
+| Business quality | 24% | Profitability, returns on capital, cash generation, balance sheet | High/stable ROE & ROA, strong margins, positive free cash flow, modest debt, healthy liquidity |
+| Valuation | 18% | Multiples relative to growth and cash flow | Reasonable PEG, forward P/E, EV/EBITDA and P/FCF; attractive FCF yield |
+| Growth | 18% | Revenue, earnings, and forward-EPS trajectory | Durable double-digit growth rather than a one-off bounce |
+| Momentum | 12% | Trend, 3/6-month returns, RSI, distance from 52-week high | Constructive uptrend, not overbought; pullbacks are acceptable when fundamentals are strong |
+| Risk penalty | −0–25 | Negative FCF, over-leverage, high beta, high short interest, stale/wide targets, micro-cap liquidity, extreme volatility | Penalties are shown explicitly with the pick |
+
+The CLI prints each pillar score (`A/Q/V/G/M`) plus plain-English score drivers,
+so a high rank can always be traced back to specific evidence.
+
+### What “Strong Buy” means here
+
+A **Strong Buy** requires broad agreement: bullish and *improving* analyst
+consensus, a high-quality business, a valuation that is not stretched, real
+growth, and momentum that is not deteriorating. A 100% target upside on a
+weak, over-levered, cash-burning company will **not** outrank a fairly valued
+high-quality compounder. The AI deep-dive is then asked to challenge the model,
+explain why the market may be mispricing the stock, and state the bear case.
+
+### What “Underrated” means here
+
+**Underrated** is flagged when business quality, valuation, and growth are
+strong but price momentum and/or consensus have not caught up. It highlights
+companies where the market may be overlooking durable fundamentals because of a
+temporary setback, an out-of-favour sector, thin coverage, or a sentiment
+disconnect. It is a research lead, not a guarantee — the deep-dive prompt
+explicitly asks what would make the analyst pass.
+
+```bash
+python main.py top-buys --limit 10
+python main.py top-buys --tickers MSFT,NVDA,UNH,JPM --limit 4
+python main.py top-buys --universe sp500,tsx60 --pool-size 80
+```
+
 ## Architecture
 
 ```
@@ -121,7 +171,7 @@ Stock-Advisor/
     ├── features.py         # Lagged feature engineering (no lookahead bias)
     ├── ml_model.py         # LightGBM classifier (walk-forward CV, auto-retrain)
     ├── anomaly.py          # Isolation Forest + GMM anomaly detection
-    ├── screener.py         # Analyst-consensus stock screener (top-buys)
+    ├── screener.py         # Multi-factor stock screener (top-buys)
     ├── newsletter.py       # Daily HTML email (render, SMTP, preview)
     └── brief.py            # Composite conviction scoring + market snapshot (nightly brief)
 ```
@@ -297,7 +347,7 @@ Isolation Forest and Gaussian Mixture models on `volume_zscore`, `volatility_20d
 
 ### Stock Screener
 
-Fetches S&P 500 / TSX 60 constituents from Wikipedia (cached 7d). Ranks by analyst consensus, enriches with fundamentals, and generates AI deep-dives for top candidates.
+Fetches S&P 500 / TSX 60 constituents from Wikipedia (cached 7d), narrows the universe on analyst consensus, then investigates the finalists on business quality, valuation, growth, momentum, recommendation revisions and risk. Every pick ships with component scores, plain-English drivers and an AI deep-dive that is asked to argue the bear case.
 
 ## Tech Stack
 
@@ -321,6 +371,6 @@ Fetches S&P 500 / TSX 60 constituents from Wikipedia (cached 7d). Ranks by analy
 .venv/bin/python -m pytest tests/ -v
 ```
 
-255 tests across 17 files: cache, database, portfolio, indicators, risk, optimizer, sentiment, features, ML model, anomaly detection, screener, brief (scores, market overview, enrichment + recommendations), newsletter (render, exec summary, fundamentals, recipients, SMTP, preview), Canadian-to-US ticker mapping, and CLI helpers.
+280 tests across 17 files: cache, database, portfolio, indicators, risk, optimizer, sentiment, features, ML model, anomaly detection, screener (pillar scores, risk flags, revisions, multi-factor ranking), brief (scores, market overview, enrichment + recommendations), newsletter (render, exec summary, fundamentals, recipients, SMTP, preview), Canadian-to-US ticker mapping, and CLI helpers.
 
 CI: ruff lint + pytest with coverage (Python 3.12). `run_brief()` is headless-safe under CI/non-TTY (default risk allocation instead of the interactive setup prompt).

@@ -1078,20 +1078,31 @@ def top_buys(
     min_analysts: int = typer.Option(
         3, "--min-analysts", help="Minimum analyst coverage to consider a pick."
     ),
+    pool_size: int = typer.Option(
+        None,
+        "--pool-size",
+        help="Finalists to deep-analyze before ranking (default: 6x --limit, min 50).",
+    ),
     deep: bool = typer.Option(
         True,
         "--deep/--no-deep",
-        help='Generate an AI deep-dive ("why buy now") for the top picks.',
+        help='Generate an AI deep-dive that challenges the screen and builds an investment case.',
     ),
 ):
-    """Screen for stocks analysts love right now (strong buys with upside)."""
-    with console.status("[bold green]Fetching universe...[/bold green]"):
+    """Investigate buy candidates on quality, valuation, growth, momentum and risk.
+
+    Analyst upside is only one input. The screen first narrows the universe on
+    consensus, then researches the finalists on fundamentals, revisions and
+    technicals before ranking them.
+    """
+    with console.status("[bold green]Fetching universe and analyst coverage...[/bold green]"):
         try:
             picks = screener.screen(
                 universe=universe,
                 custom=tickers,
                 limit=limit,
                 min_analysts=min_analysts,
+                pool_size=pool_size,
             )
         except ValueError as e:
             console.print(f"[red]{e}[/red]")
@@ -1104,44 +1115,84 @@ def top_buys(
         return
 
     table = Table(
-        title=f"[bold]Top Analyst Buys ({universe if not tickers else 'custom'})[/bold]",
+        title=f"[bold]Top Buy Candidates — multi-factor screen ({universe if not tickers else 'custom'})[/bold]",
         border_style="bright_cyan",
     )
     table.add_column("#", justify="right", style="dim")
     table.add_column("Symbol", style="bold cyan")
-    table.add_column("Company", style="white", max_width=26)
+    table.add_column("Company", style="white", max_width=20)
     table.add_column("Price", justify="right")
-    table.add_column("Target", justify="right")
     table.add_column("Upside", justify="right")
-    table.add_column("Rating", justify="center")
-    table.add_column("#", justify="right")
-    table.add_column("Sector", style="white", max_width=18)
+    table.add_column("Score", justify="right")
+    table.add_column("Verdict", justify="center")
+    table.add_column("Why", style="white", max_width=30)
 
     for i, p in enumerate(picks, 1):
-        label, color = screener.rating_label(p)
+        verdict, color = screener.conviction_label(p)
+        score = p.get("score", p.get("prelim_score", 0))
+        score_color = "green" if score >= 75 else "yellow" if score >= 55 else "red"
+        upside = p.get("upside", 0)
+        upside_color = "green" if upside >= 0 else "red"
+        tags = ", ".join((p.get("tags") or [])[:4]) or "-"
         table.add_row(
             str(i),
             p["symbol"],
             p.get("company") or "-",
             f"${p['current']:,.2f}",
-            f"${p['target']:,.2f}",
-            f"[green]+{p['upside'] * 100:.0f}%[/green]",
-            f"[{color}]{label}[/{color}]",
-            str(p["total"]),
-            f"{p.get('sector') or '-'}",
+            f"[{upside_color}]{upside * 100:+.0f}%[/{upside_color}]",
+            f"[{score_color}]{score:.0f}[/{score_color}]",
+            f"[{color}]{verdict}[/{color}]",
+            tags,
         )
     console.print(table)
 
-    console.print("Mean target upside is from yfinance analyst consensus (24h cache).")
+    console.print(
+        "\n[dim]Score = analyst conviction 28% + business quality 24% + valuation 18% "
+        "+ growth 18% + momentum 12% − risk penalties. "
+        "“Underrated” flags quality/valuation that price momentum and consensus have not yet recognized.[/dim]"
+    )
+
+    # Even without the AI, show the concrete drivers behind the ranking.
+    reason_lines = []
+    for p in picks[:5]:
+        score = p.get("score", 0)
+        verdict, color = screener.conviction_label(p)
+        pillars = (
+            f"A{p.get('analyst_score', 0):.0f} "
+            f"Q{p.get('quality_score', 0):.0f} "
+            f"V{p.get('valuation_score', 0):.0f} "
+            f"G{p.get('growth_score', 0):.0f} "
+            f"M{p.get('momentum_score', 0):.0f}"
+        )
+        drivers = (p.get("score_reasons") or [])[:3]
+        line = (
+            f"[bold cyan]{p['symbol']}[/bold cyan] [{color}]{verdict} · {score:.0f}/100[/{color}] "
+            f"[dim]({p.get('sector') or 'n/a'}; {pillars}; target ${p['target']:,.2f}, {p.get('upside', 0) * 100:+.0f}%)[/dim]"
+        )
+        if drivers:
+            line += "\n  " + " | ".join(drivers)
+        if p.get("risk_flags"):
+            line += f"\n  [red]Risk:[/red] {', '.join(p['risk_flags'])}"
+        reason_lines.append(line)
+    if reason_lines:
+        console.print(
+            Panel(
+                "\n\n".join(reason_lines),
+                title="🔎 Why They Rank",
+                border_style="cyan",
+            )
+        )
 
     if deep:
-        with console.status("[bold magenta]Researching top picks...[/bold magenta]"):
+        with console.status(
+            "[bold magenta]Investigating business quality, valuation, growth, momentum and risk...[/bold magenta]"
+        ):
             narrative = screener.deep_dive(picks)
         if narrative:
             console.print(
                 Panel(
                     narrative,
-                    title="🧠 Deep-Dive: Why These Are Buys Now",
+                    title="🧠 Deep-Dive: Investment Case & Risks",
                     border_style="bright_magenta",
                 )
             )

@@ -1088,6 +1088,12 @@ def top_buys(
         "--deep/--no-deep",
         help='Generate an AI deep-dive that challenges the screen and builds an investment case.',
     ),
+    persist: bool = typer.Option(
+        False,
+        "--persist",
+        "-p",
+        help="Persist the screen to Supabase (requires DATABASE_REST_URL + SUPABASE_PUBLISHABLE_KEY).",
+    ),
 ):
     """Investigate buy candidates on quality, valuation, growth, momentum and risk.
 
@@ -1095,6 +1101,9 @@ def top_buys(
     consensus, then researches the finalists on fundamentals, revisions and
     technicals before ranking them.
     """
+    # Ensure the local cache tables exist on a fresh runner before screening.
+    init_db()
+
     with console.status("[bold green]Fetching universe and analyst coverage...[/bold green]"):
         try:
             picks = screener.screen(
@@ -1195,6 +1204,26 @@ def top_buys(
                     title="🧠 Deep-Dive: Investment Case & Risks",
                     border_style="bright_magenta",
                 )
+            )
+    else:
+        narrative = ""
+
+    if persist:
+        label = "custom" if tickers else universe
+        with console.status("[bold green]Persisting top buys to Supabase...[/bold green]"):
+            ok = screener.persist_screen(
+                picks,
+                universe=label,
+                limit=limit,
+                min_analysts=min_analysts,
+                narrative=narrative or None,
+            )
+        if ok:
+            console.print("[green]Top buys persisted to Supabase.[/green]")
+        else:
+            console.print(
+                "[red]Failed to persist top buys — check DATABASE_REST_URL, "
+                "SUPABASE_PUBLISHABLE_KEY and the sql/supabase_brief.sql schema.[/red]"
             )
 
 

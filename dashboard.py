@@ -5,6 +5,7 @@ Run: streamlit run dashboard_new.py
 
 from __future__ import annotations
 
+import html as html_escape
 import json
 import os
 
@@ -78,6 +79,7 @@ tabs = st.tabs(
         "Risk & Attribution",
         "Allocation",
         "Conviction",
+        "Top Buys",
         "Ticker Deep Dive",
     ]
 )
@@ -413,6 +415,134 @@ with tabs[4]:
         st.warning(f"Conviction data error: {e}")
 
 with tabs[5]:
+    st.header("Top Buys — Multi-Factor Screen")
+    try:
+        runs_df = pd.read_sql(
+            text("""
+            SELECT id, run_date, generated_at, universe, pick_limit, picks_count, narrative
+            FROM top_buys_runs
+            ORDER BY run_date DESC
+        """),
+            engine,
+        )
+        if runs_df.empty:
+            st.info(
+                "No top-buys screens found. Run `python main.py top-buys --persist` "
+                "(or the nightly workflow) first."
+            )
+        else:
+            dates_tb = runs_df["run_date"].astype(str).str[:10]
+            match = runs_df[dates_tb == selected_date_str]
+            row = match.iloc[0] if not match.empty else runs_df.iloc[0]
+            if match.empty:
+                st.caption(
+                    f"No screen saved for {selected_date_str} — showing the latest "
+                    f"({str(row['run_date'])[:10]})."
+                )
+
+            picks_df = pd.read_sql(
+                text("""
+                SELECT * FROM top_buys_picks
+                WHERE run_id = :rid
+                ORDER BY rank
+            """),
+                engine,
+                params={"rid": int(row["id"])},
+            )
+
+            st.caption(
+                f"{row['universe'] or 'screen'} · {len(picks_df)} picks · "
+                f"generated {str(row['generated_at'])[:16]}"
+            )
+
+            if picks_df.empty:
+                st.info("This run has no picks.")
+            else:
+                avg_score = picks_df["score"].fillna(0).mean()
+                avg_upside = picks_df["upside"].fillna(0).mean() * 100
+                strong = picks_df["verdict"].fillna("").str.lower().str.contains("strong").sum()
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Picks", len(picks_df))
+                c2.metric("Avg Score", f"{avg_score:.0f}/100")
+                c3.metric("Avg Upside", f"{avg_upside:+.1f}%")
+                c4.metric("Strong Buy", int(strong))
+
+                fig = px.bar(
+                    picks_df.sort_values("score"),
+                    x="score",
+                    y="symbol",
+                    orientation="h",
+                    color="score",
+                    color_continuous_scale=["red", "yellow", "green"],
+                    range_color=[0, 100],
+                    title="Multi-Factor Score (0–100)",
+                    hover_data=["verdict", "upside", "sector"],
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                show = picks_df.rename(
+                    columns={
+                        "rank": "#",
+                        "symbol": "Ticker",
+                        "company": "Company",
+                        "sector": "Sector",
+                        "price": "Price",
+                        "target": "Target",
+                        "upside": "Upside",
+                        "score": "Score",
+                        "verdict": "Verdict",
+                        "analyst_score": "Analyst",
+                        "quality_score": "Quality",
+                        "valuation_score": "Valuation",
+                        "growth_score": "Growth",
+                        "momentum_score": "Momentum",
+                        "underrated_score": "Underrated",
+                        "data_coverage": "Coverage",
+                        "risk_penalty": "Risk Penalty",
+                    }
+                )
+                show["Upside"] = (show["Upside"].fillna(0) * 100).round(1)
+                cols = [
+                    "#", "Ticker", "Company", "Sector", "Price", "Target",
+                    "Upside", "Score", "Verdict", "Analyst", "Quality",
+                    "Valuation", "Growth", "Momentum", "Underrated",
+                    "Coverage", "Risk Penalty",
+                ]
+                st.dataframe(
+                    show[[c for c in cols if c in show.columns]],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                with st.expander("Why each name ranked (score drivers & risks)"):
+                    for _, p in picks_df.iterrows():
+                        tags = p.get("tags") or []
+                        reasons = p.get("score_reasons") or []
+                        risks = p.get("risk_flags") or []
+                        st.markdown(
+                            f"**{p['symbol']}** — {p.get('score', 0):.0f}/100 · "
+                            f"{p.get('verdict') or ''}"
+                            + (f" · _{', '.join(map(str, tags))}_" if tags else "")
+                        )
+                        for reason in reasons:
+                            st.markdown(f"- {reason}")
+                        if risks:
+                            st.markdown(
+                                "**Risk flags:** "
+                                + ", ".join(html_escape.escape(str(r)) for r in risks)
+                            )
+
+                narrative = row.get("narrative")
+                if isinstance(narrative, str) and narrative.strip():
+                    with st.expander("AI Investment Case & Risks", expanded=False):
+                        st.markdown(narrative)
+    except Exception as e:
+        st.info(
+            f"Top-buys data unavailable: {e}. Run `sql/supabase_brief.sql` to create "
+            "the `top_buys_runs` / `top_buys_picks` tables."
+        )
+
+with tabs[6]:
     st.header("Ticker Deep Dive")
     try:
         day_df = pd.read_sql(

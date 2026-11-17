@@ -311,3 +311,76 @@ create policy "allow write" on recommendations
     for insert with check (true);
 create policy "allow update" on recommendations
     for update using (true) with check (true);
+
+-- ---------------------------------------------------------------------------
+-- Top-buys screen history (written by `main.py top-buys --persist`)
+-- ---------------------------------------------------------------------------
+
+create table if not exists top_buys_runs (
+    id            bigserial primary key,
+    run_date      date not null unique,
+    generated_at  timestamptz not null default now(),
+    universe      text,
+    pick_limit    integer,
+    min_analysts  integer default 3,
+    weights_used  jsonb,
+    picks_count   integer default 0,
+    narrative     text
+);
+
+create table if not exists top_buys_picks (
+    id               bigserial primary key,
+    run_id           bigint not null references top_buys_runs(id) on delete cascade,
+    rank             integer not null,
+    symbol           text not null,
+    company          text,
+    sector           text,
+    price            numeric,
+    target           numeric,
+    target_low       numeric,
+    target_high      numeric,
+    upside           numeric,
+    score            numeric,
+    verdict          text,
+    tags             jsonb not null default '[]'::jsonb,
+    score_reasons    jsonb not null default '[]'::jsonb,
+    risk_flags       jsonb not null default '[]'::jsonb,
+    analyst_score    numeric,
+    quality_score    numeric,
+    valuation_score  numeric,
+    growth_score     numeric,
+    momentum_score   numeric,
+    underrated_score numeric,
+    strong_buy       integer,
+    buy              integer,
+    hold             integer,
+    sell             integer,
+    strong_sell      integer,
+    total_analysts   integer,
+    data_coverage    numeric,
+    risk_penalty     numeric,
+    revisions        jsonb,
+    unique (run_id, symbol)
+);
+create index if not exists idx_top_buys_picks_run on top_buys_picks (run_id, rank);
+create index if not exists idx_top_buys_picks_symbol on top_buys_picks (symbol);
+
+alter table top_buys_runs  enable row level security;
+alter table top_buys_picks enable row level security;
+
+create policy "allow read" on top_buys_runs  for select using (true);
+create policy "allow read" on top_buys_picks for select using (true);
+
+create policy "allow write" on top_buys_runs
+    for insert with check (true);
+create policy "allow update" on top_buys_runs
+    for update using (true) with check (true);
+create policy "allow delete" on top_buys_runs
+    for delete using (true);
+
+create policy "allow write" on top_buys_picks
+    for insert with check (true);
+create policy "allow update" on top_buys_picks
+    for update using (true) with check (true);
+create policy "allow delete" on top_buys_picks
+    for delete using (true);

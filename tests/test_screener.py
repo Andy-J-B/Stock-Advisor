@@ -491,3 +491,121 @@ class TestScreenMultiFactor:
         assert rows[0]["verdict"] in ("Buy", "Strong Buy")
         for key in ("analyst_score", "quality_score", "valuation_score", "growth_score", "momentum_score", "tags"):
             assert key in rows[0]
+
+
+class _CapResp:
+    def __init__(self, json):
+        self._json = json
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._json
+
+
+class _CapClient:
+    """Records every Supabase REST call made by the screen persistence layer."""
+
+    def __init__(self, *, run_id=42, runs=None, picks=None):
+        self.calls = []
+        self.run_id = run_id
+        self.runs = runs or []
+        self.picks = picks or []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def post(self, url, json=None, headers=None):
+        self.calls.append(("post", url, json))
+        if "top_buys_runs" in url:
+            return _CapResp([{"id": self.run_id}])
+        return _CapResp([])
+
+    def get(self, url, headers=None):
+        self.calls.append(("get", url, None))
+        if "top_buys_runs" in url:
+            return _CapResp(self.runs)
+        return _CapResp(self.picks)
+
+    def delete(self, url, headers=None):
+        self.calls.append(("delete", url, None))
+        return _CapResp([])
+
+
+def _picks():
+    return [
+        {
+            "symbol": "MSFT", "company": "Microsoft", "sector": "Technology",
+            "current": 400.0, "target": 450.0, "upside": 0.125, "score": 78.0,
+            "verdict": "Strong Buy", "tags": ["Quality"], "score_reasons": ["Strong ROE"],
+            "risk_flags": [], "analyst_score": 80, "quality_score": 90,
+            "valuation_score": 60, "growth_score": 70, "momentum_score": 55,
+            "underrated_score": 72, "strong_buy": 10, "buy": 20, "hold": 3,
+            "sell": 0, "strong_sell": 0, "total": 33,
+            "data_coverage": 0.9, "risk_penalty": 0.0, "revisions": {},
+        }
+    ]
+
+
+def test_persist_screen_upserts_run_and_picks(monkeypatch):
+    monkeypatch.setenv("DATABASE_REST_URL", "https://db.example/rest/v1")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "k")
+    client = _CapClient()
+    monkeypatch.setattr(screener.httpx, "Client", lambda *a, **k: client)
+
+    ok = screener.persist_screen(
+        _picks(), run_date="2026-11-16", universe="sp500", limit=10,
+        min_analysts=3, narrative="AI case",
+    )
+
+    assert ok is True
+    run_post = next(c for c in client.calls if c[0] == "post" and c[1].endswith(
+        "/top_buys_runs?on_conflict=run_date"))
+    assert run_post[2]["run_date"] == "2026-11-16"
+    assert run_post[2]["picks_count"] == 1
+    assert run_post[2]["narrative"] == "AI case"
+
+    picks_post = next(c for c in client.calls if c[0] == "post" and c[1].endswith(
+        "/top_buys_picks?on_conflict=run_id,symbol"))
+    assert picks_post[2][0]["run_id"] == 42
+    assert picks_post[2][0]["rank"] == 1
+    assert picks_post[2][0]["symbol"] == "MSFT"
+    assert picks_post[2][0]["tags"] == ["Quality"]
+
+    assert any(c[0] == "delete" and "run_id=eq.42" in c[1] for c in client.calls)
+
+
+def test_persist_screen_unconfigured(monkeypatch):
+    monkeypatch.delenv("DATABASE_REST_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY", raising=False)
+    monkeypatch.delenv("SUPABASE_ANON_KEY", raising=False)
+    assert screener.persist_screen(_picks()) is False
+
+
+def test_fetch_screen_loads_run_and_ranked_picks(monkeypatch):
+    monkeypatch.setenv("DATABASE_REST_URL", "https://db.example/rest/v1")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "k")
+    client = _CapClient(
+        runs=[{"id": 9, "run_date": "2026-11-16", "universe": "sp500"}],
+        picks=[{"run_id": 9, "rank": 1, "symbol": "MSFT", "score": 78}],
+    )
+    monkeypatch.setattr(screener.httpx, "Client", lambda *a, **k: client)
+
+    screen = screener.fetch_screen("2026-11-16")
+
+    assert screen is not None
+    assert screen["run"]["id"] == 9
+    assert screen["picks"][0]["symbol"] == "MSFT"
+    assert any("run_date=eq.2026-11-16" in c[1] for c in client.calls)
+    assert any("run_id=eq.9&order=rank.asc" in c[1] for c in client.calls)
+
+
+def test_fetch_screen_unconfigured(monkeypatch):
+    monkeypatch.delenv("DATABASE_REST_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY", raising=False)
+    monkeypatch.delenv("SUPABASE_ANON_KEY", raising=False)
+    assert screener.fetch_screen() is None

@@ -138,6 +138,9 @@ explicitly asks what would make the analyst pass.
 python main.py top-buys --limit 10
 python main.py top-buys --tickers MSFT,NVDA,UNH,JPM --limit 4
 python main.py top-buys --universe sp500,tsx60 --pool-size 80
+
+# persist the ranked screen + AI case so the nightly email and dashboard can use it
+python main.py top-buys --limit 10 --persist
 ```
 
 ## Architecture
@@ -254,13 +257,19 @@ python main.py brief-weights --sentiment 0.30 --ml 0.30
        sync and pruned on every persist
      - `portfolio_accounts` — per-account `cash`/`initial_cash`, so a CI brief
        (no local DB) can rebuild the exact net worth
-4. `python main.py brief --notify` posts the score summary **plus the market recap** to your webhook.
+4. `python main.py top-buys --persist` upserts the multi-factor screen into:
+   - `top_buys_runs` — one row per `run_date` (universe, weights, pick count, AI narrative)
+   - `top_buys_picks` — one ranked row per finalist (price, target, upside, score,
+     verdict, pillar scores, analyst breakdown, tags, score drivers, risk flags)
+5. `python main.py brief --notify` posts the score summary **plus the market recap** to your webhook.
 
 ### Automated nightly runs
 
 `.github/workflows/nightly-brief.yml` runs `brief --persist --notify` on a cron
 (weekdays 21:53 UTC = 14:53 PDT, after US close) and posts a failure alert to
-your webhook. (`.gitlab-ci.yml` provides the same jobs for running it on GitLab
+your webhook. A follow-up `top-buys` job runs `python main.py top-buys --limit
+10 --persist`, and the `newsletter` job runs after both (it still sends if the
+screen job fails). (`.gitlab-ci.yml` provides the same jobs for running it on GitLab
 schedules instead.) Add the API keys + `DATABASE_URL`/`DATABASE_REST_URL`/
 `SUPABASE_PUBLISHABLE_KEY`/`NOTIFY_WEBHOOK_URL` as repo Actions secrets (or GitLab
 project CI/CD variables).
@@ -277,6 +286,11 @@ HTML digest and emails it via Gmail SMTP (stdlib `smtplib`, no extra deps):
 - **Valuation snapshot** — market cap, P/E (TTM + forward), price/book,
   dividend yield, 52-week range, target price (best-effort via yfinance)
 - **Company news** for the day's top movers
+- **Top Buys** (bottom section) — the persisted multi-factor screen: rank, price,
+  upside, score, verdict, tags, score drivers, risk flags, summary stats
+  (average score/upside, Strong Buy count) and the AI investment case. Loaded
+  from the `top_buys_runs` / `top_buys_picks` tables written by the nightly
+  `top-buys` job; omitted gracefully when no screen is available.
 
 ```bash
 python main.py newsletter                 # build + send
@@ -309,6 +323,7 @@ The dashboard is a pure read-only viewer over the Postgres history tables
 - Color-coded conviction table with per-component breakdown, anomaly flags, price, daily % change, Δ vs the previous run (color-coded), signal agreement, and action hint
 - Score distribution histogram and a Biggest Movers panel for the selected day
 - Per-ticker history line chart (composite + all 4 components over time), plus a component breakdown area chart
+- **Top Buys** tab: the selected day's multi-factor screen — summary metrics, score bar chart, ranked table (pillar scores, upside, coverage, risk penalty), expandable score drivers/risk flags, and the AI investment case. Falls back to the latest saved screen when the selected date has none.
 - Expandable per-ticker details panel: top headline, analyst breakdown, signal agreement, anomaly detail, action suggestion, and full reasoning
 
 ## Key Subsystems

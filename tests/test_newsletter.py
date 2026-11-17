@@ -67,6 +67,31 @@ def _fake_funds() -> dict:
     }
 
 
+def _fake_top_buys() -> dict:
+    return {
+        "run": {
+            "run_date": "2026-09-14",
+            "universe": "sp500",
+            "narrative": "### MSFT\n**Quality** compounder.\n- Durable moat\n- Reasonable PEG",
+        },
+        "picks": [
+            {
+                "rank": 1, "symbol": "MSFT", "company": "Microsoft", "sector": "Technology",
+                "price": 400.0, "target": 450.0, "upside": 0.125, "score": 78.0,
+                "verdict": "Strong Buy", "tags": ["Quality", "Revisions up"],
+                "score_reasons": ["Strong ROE and margins", "Reasonable PEG"],
+                "risk_flags": ["high beta"],
+            },
+            {
+                "rank": 2, "symbol": "JPM", "company": "JPMorgan", "sector": "Financials",
+                "price": 200.0, "target": 220.0, "upside": 0.10, "score": 66.0,
+                "verdict": "Buy", "tags": ["Value"],
+                "score_reasons": ["Cheap on tangible book"], "risk_flags": [],
+            },
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Bucketing + rendering
 # ---------------------------------------------------------------------------
@@ -99,6 +124,25 @@ def test_render_email_empty_data():
     snap["rows"] = []
     html = newsletter.render_email(run, snap, {})
     assert "No equity positions" in html
+
+
+def test_render_email_includes_top_buys_section():
+    html = newsletter.render_email(
+        _fake_run(), _fake_snapshot(), _fake_funds(), top_buys=_fake_top_buys()
+    )
+    assert "Top Buys — Multi-Factor Screen" in html
+    assert "Avg Score" in html and "72/100" in html
+    assert "Strong Buy" in html
+    assert "Strong ROE and margins" in html
+    assert "high beta" in html
+    assert "AI Investment Case" in html
+    assert "Durable moat" in html
+    assert "**" not in html  # light Markdown stripped for email
+
+
+def test_render_email_omits_top_buys_when_empty():
+    html = newsletter.render_email(_fake_run(), _fake_snapshot(), _fake_funds())
+    assert "Top Buys — Multi-Factor Screen" not in html
 
 
 def test_exec_summary_rules_fallback(monkeypatch):
@@ -248,6 +292,7 @@ def test_run_newsletter_preview(monkeypatch, tmp_path):
     monkeypatch.setattr(newsletter.portfolio, "snapshot", lambda: {k: v for k, v in _fake_snapshot().items()})
     monkeypatch.setattr(newsletter.data_client, "get_ticker_info", lambda t: {})
     monkeypatch.setattr(newsletter.data_client, "get_ticker_news_batch", lambda t, limit=3: {})
+    monkeypatch.setattr(newsletter.screener, "fetch_screen", lambda run_date=None: None)
     monkeypatch.chdir(tmp_path)
 
     ok = newsletter.run_newsletter(send=False)

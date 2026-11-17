@@ -17,6 +17,7 @@ be previewed before credentials are added.
 from __future__ import annotations
 
 import html as html_escape
+import json
 import os
 import smtplib
 import ssl
@@ -25,7 +26,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr, formatdate
 
-from src import brief, data_client, portfolio
+from src import brief, data_client, portfolio, screener
 
 DEFAULT_RECIPIENT = "080.abae@gmail.com"
 
@@ -323,7 +324,8 @@ def _gemini_or_none(prompt: str) -> str | None:
 
 
 def render_email(run: brief.BriefRun, snap: dict, funds: dict,
-                 company_news: dict | None = None) -> str:
+                 company_news: dict | None = None,
+                 top_buys: dict | None = None) -> str:
     """Build the full HTML newsletter body (table layout, email-client safe)."""
     mkt = run.market or {}
     buckets = _classify(run)
@@ -538,6 +540,10 @@ def render_email(run: brief.BriefRun, snap: dict, funds: dict,
                          f'border-left:2px solid #E6E8EB;">{body}</div>')
         h.append('</td></tr>')
 
+    # ---- Top buys (multi-factor screen) ----
+    if top_buys and top_buys.get("picks"):
+        h.append(_top_buys_section(top_buys))
+
     # ---- Footer ----
     ts = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M (%Z)").replace(" ()", "")
     prefs = html_escape.escape(_env("EMAIL_TO", DEFAULT_RECIPIENT))
@@ -602,6 +608,136 @@ def _why_line(e: dict) -> str:
         hd = str(e["headline"])[:100]
         parts.append(f"top headline: {hd}")
     return " · ".join(parts) if parts else "—"
+
+
+# ---------------------------------------------------------------------------
+# Top-buys screen section
+# ---------------------------------------------------------------------------
+
+def _as_list(value) -> list:
+    """Normalise a JSONB list (or JSON string) coming back from PostgREST."""
+    if not value:
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except Exception:
+            return [value]
+    return value if isinstance(value, list) else [value]
+
+
+def _clean_md(text: str) -> str:
+    """Strip the light Markdown the AI returns into email-friendly plain text."""
+    import re
+
+    text = re.sub(r"^#{1,6}\s*", "", text or "", flags=re.MULTILINE)
+    text = re.sub(r"^\s*[-*]\s+", "• ", text, flags=re.MULTILINE)
+    text = text.replace("**", "").replace("__", "")
+    return text.strip()
+
+
+def _top_buys_section(screen: dict) -> str:
+    """Render the persisted multi-factor buy screen at the bottom of the email."""
+    run = screen.get("run") or {}
+    picks = screen.get("picks") or []
+    if not picks:
+        return ""
+
+    scores = [float(p.get("score") or 0.0) for p in picks]
+    upsides = [float(p.get("upside") or 0.0) for p in picks]
+    avg_score = sum(scores) / len(scores)
+    avg_upside = sum(upsides) / len(upsides)
+    strong = sum(
+        1 for p in picks if "strong" in str(p.get("verdict") or "").lower()
+    )
+    run_date = str(run.get("run_date") or "")[:10]
+    universe = str(run.get("universe") or "screen").upper()
+
+    out = [
+        '<tr><td class="sec" style="padding:24px 34px 26px;'
+        'border-top:1px solid #EEF0F3;">'
+        '<div class="sec-t" style="font-size:11px;font-weight:700;'
+        'letter-spacing:1.5px;text-transform:uppercase;color:#0052FF;">'
+        'Top Buys — Multi-Factor Screen</div>'
+        f'<div class="ds" style="font-size:13px;margin-top:6px;">'
+        f'{html_escape.escape(universe)} · {len(picks)} finalists'
+        f'{f" · {html_escape.escape(run_date)}" if run_date else ""} · '
+        'ranked on analyst conviction, quality, valuation, growth, momentum '
+        'and risk</div>'
+    ]
+
+    # Stats strip
+    stats = [
+        ("Picks", str(len(picks))),
+        ("Avg Score", f"{avg_score:.0f}/100"),
+        ("Avg Upside", f"{avg_upside * 100:+.0f}%"),
+        ("Strong Buy", str(strong)),
+    ]
+    out.append(
+        '<table role="presentation" cellspacing="0" cellpadding="0" border="0" '
+        'width="100%" style="margin-top:12px;"><tr>'
+    )
+    for i, (label, value) in enumerate(stats):
+        style = "padding:2px 0 2px 18px;border-left:1px solid #EEF0F3;"
+        if i == 0:
+            style = "padding:2px 0;"
+        out.append(
+            f'<td style="{style}">'
+            f'<div class="ds" style="font-size:10px;font-weight:600;'
+            f'text-transform:uppercase;letter-spacing:.3px;">{label}</div>'
+            f'<div class="di" style="font-size:16px;font-weight:700;'
+            f'margin-top:3px;">{value}</div></td>'
+        )
+    out.append('</tr></table>')
+
+    # Ranked picks table
+    out.append(
+        '<table role="presentation" cellspacing="0" cellpadding="0" border="0" '
+        'width="100%" class="tbl" style="margin-top:14px;">'
+        f'{_thead(["#", "Ticker", "Price", "Upside", "Score", "Verdict", "Why"], right={2, 3, 4})}'
+    )
+    for i, p in enumerate(picks[:10], start=1):
+        tags = _as_list(p.get("tags"))
+        reasons = _as_list(p.get("score_reasons"))
+        risks = _as_list(p.get("risk_flags"))
+        why = " · ".join(str(r) for r in reasons[:2]) or "—"
+        if risks:
+            why += f' · Risk: {", ".join(str(r) for r in risks)}'
+        tag_txt = ", ".join(str(t) for t in tags[:3])
+        ticker_cell = _ticker_cell(p.get("symbol") or "")
+        if tag_txt:
+            ticker_cell += (
+                f' <span class="dm" style="color:#9AA0A6;font-size:10px;">'
+                f'{html_escape.escape(tag_txt)}</span>'
+            )
+        out.append(
+            _trow([
+                f'<span class="dm">{i}</span>',
+                ticker_cell,
+                _money(p["price"]) if p.get("price") else "—",
+                _chg((p.get("upside") or 0) * 100, pct=True, digits=0),
+                f'<b class="di">{float(p.get("score") or 0):.0f}</b>'
+                f'<span class="dm">/100</span>',
+                _rec_pill(p.get("verdict")),
+                f'<span class="ds" style="font-size:11px;line-height:17px;'
+                f'color:#5B616E;">{html_escape.escape(why[:180])}</span>',
+            ], right={2, 3, 4})
+        )
+    out.append('</table>')
+
+    narrative = _clean_md(run.get("narrative") or "")
+    if narrative:
+        out.append(
+            '<div class="ds" style="font-size:11px;font-weight:700;'
+            'text-transform:uppercase;letter-spacing:.8px;margin:18px 0 4px;">'
+            'AI Investment Case &amp; Risks</div>'
+            '<div class="ds" style="font-size:12px;line-height:18px;'
+            'white-space:pre-wrap;color:#5B616E;">'
+            f'{html_escape.escape(narrative)}</div>'
+        )
+
+    out.append('</td></tr>')
+    return "".join(out)
 
 
 def _fund_table_flat(funds: dict) -> str:
@@ -682,8 +818,9 @@ def run_newsletter(send: bool = True, preview: bool = False) -> bool:
     funds = _fundamentals(tickers)
     held = [s.ticker for s in run.scores if s.portfolio_weight and s.portfolio_weight > 0]
     company_news = data_client.get_ticker_news_batch(held, limit=3)
+    top_buys = screener.fetch_screen(run_date=run.run_date)
 
-    body = render_email(run, snap, funds, company_news)
+    body = render_email(run, snap, funds, company_news, top_buys=top_buys)
 
     if not send or not is_smtp_configured():
         path = save_preview(body)

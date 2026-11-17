@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import math
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime
 from typing import Any, Optional
 
 import httpx
@@ -1038,6 +1039,234 @@ def screen(
     finalists = [_score_row(row) for row in finalists]
     finalists.sort(key=lambda r: r["score"], reverse=True)
     return finalists[:limit]
+
+
+# ---------------------------------------------------------------------------
+# Persistence to Supabase (top-buys history)
+# ---------------------------------------------------------------------------
+
+_SUPABASE_TABLE_TOP_RUNS = "top_buys_runs"
+_SUPABASE_TABLE_TOP_PICKS = "top_buys_picks"
+
+
+def _top_buys_rest_config() -> tuple[str, str]:
+    """Return (rest_url, api_key) for Supabase REST, or ('', '')."""
+    import os
+
+    rest_url = os.getenv("DATABASE_REST_URL", "")
+    api_key = os.getenv(
+        "SUPABASE_PUBLISHABLE_KEY", os.getenv("SUPABASE_ANON_KEY", "")
+    )
+    return rest_url, api_key
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert numpy/pandas scalars into plain JSON-serializable values."""
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    if hasattr(value, "item") and not isinstance(value, (str, bytes)):
+        try:
+            return value.item()
+        except Exception:
+            return value
+    return value
+
+
+def _pick_payload(pick: dict[str, Any], run_id: Any, rank: int) -> dict[str, Any]:
+    """Flatten one screen result into a `top_buys_picks` row."""
+    return _json_safe({
+        "run_id": run_id,
+        "rank": rank,
+        "symbol": pick.get("symbol"),
+        "company": pick.get("company") or None,
+        "sector": pick.get("sector") or None,
+        "price": pick.get("current"),
+        "target": pick.get("target"),
+        "target_low": pick.get("target_low"),
+        "target_high": pick.get("target_high"),
+        "upside": pick.get("upside"),
+        "score": pick.get("score"),
+        "verdict": pick.get("verdict"),
+        "tags": pick.get("tags") or [],
+        "score_reasons": pick.get("score_reasons") or [],
+        "risk_flags": pick.get("risk_flags") or [],
+        "analyst_score": pick.get("analyst_score"),
+        "quality_score": pick.get("quality_score"),
+        "valuation_score": pick.get("valuation_score"),
+        "growth_score": pick.get("growth_score"),
+        "momentum_score": pick.get("momentum_score"),
+        "underrated_score": pick.get("underrated_score"),
+        "strong_buy": pick.get("strong_buy"),
+        "buy": pick.get("buy"),
+        "hold": pick.get("hold"),
+        "sell": pick.get("sell"),
+        "strong_sell": pick.get("strong_sell"),
+        "total_analysts": pick.get("total"),
+        "data_coverage": pick.get("data_coverage"),
+        "risk_penalty": pick.get("risk_penalty"),
+        "revisions": pick.get("revisions") or {},
+    })
+
+
+def persist_screen(
+    picks: list[dict[str, Any]],
+    run_date: date | str | None = None,
+    universe: str = "sp500",
+    limit: int | None = None,
+    min_analysts: int = 3,
+    narrative: str | None = None,
+) -> bool:
+    """Upsert a top-buys screen (run + picks) into Supabase Postgres.
+
+    Requires ``DATABASE_REST_URL`` and a Supabase API key.  The run is keyed on
+    ``run_date`` so a same-day re-run overwrites it, and its picks are replaced
+    so stale finalists never linger.  Returns True on success.
+    """
+    import httpx
+
+    if not picks:
+        log.warning("No picks to persist — skipping top-buys persist.")
+        return False
+
+    rest_url, api_key = _top_buys_rest_config()
+    if not rest_url or not api_key:
+        log.warning(
+            "DATABASE_REST_URL / SUPABASE_PUBLISHABLE_KEY not set — "
+            "skipping top-buys persist."
+        )
+        return False
+
+    if isinstance(run_date, str):
+        run_date = date.fromisoformat(run_date)
+    run_date = run_date or date.today()
+    generated_at = datetime.now().astimezone()
+
+    headers = {
+        "apikey": api_key,
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates",
+    }
+    run_payload = _json_safe({
+        "run_date": run_date.isoformat(),
+        "generated_at": generated_at.isoformat(),
+        "universe": universe,
+        "pick_limit": limit if limit is not None else len(picks),
+        "min_analysts": min_analysts,
+        "weights_used": dict(SCORE_WEIGHTS),
+        "picks_count": len(picks),
+        "narrative": narrative or None,
+    })
+
+    try:
+        with httpx.Client(timeout=30) as client:
+            resp = client.post(
+                f"{rest_url}/{_SUPABASE_TABLE_TOP_RUNS}?on_conflict=run_date",
+                json=run_payload,
+                headers={
+                    **headers,
+                    "Prefer": "resolution=merge-duplicates,return=representation",
+                },
+            )
+            resp.raise_for_status()
+            rows = resp.json()
+            run_id = rows[0]["id"] if rows else None
+            if run_id is None:
+                log.error("Could not determine top-buys run_id from Supabase response.")
+                return False
+
+            # Replace the run's picks so a shrinking screen cannot leave stale
+            # names behind. Best-effort: an upsert still works without delete.
+            try:
+                resp = client.delete(
+                    f"{rest_url}/{_SUPABASE_TABLE_TOP_PICKS}?run_id=eq.{run_id}",
+                    headers={"apikey": api_key},
+                )
+                resp.raise_for_status()
+            except Exception as exc:
+                log.warning("Could not clear previous top-buys picks: %s", exc)
+
+            payloads = [
+                _pick_payload(pick, run_id, rank)
+                for rank, pick in enumerate(picks, start=1)
+            ]
+            for i in range(0, len(payloads), 50):
+                resp = client.post(
+                    f"{rest_url}/{_SUPABASE_TABLE_TOP_PICKS}"
+                    "?on_conflict=run_id,symbol",
+                    json=payloads[i : i + 50],
+                    headers=headers,
+                )
+                resp.raise_for_status()
+
+        log.info(
+            "Persisted top-buys screen (id=%s) for %s with %d picks.",
+            run_id, run_date, len(picks),
+        )
+        return True
+    except Exception as exc:
+        log.error("Failed to persist top-buys screen: %s", exc)
+        return False
+
+
+def fetch_screen(run_date: date | str | None = None) -> dict[str, Any] | None:
+    """Load a persisted top-buys screen (run + ranked picks) from Supabase.
+
+    Returns None when REST is unconfigured, nothing has been persisted yet, or
+    the request fails.  With *run_date* the exact day is preferred, falling
+    back to the most recent run so the newsletter/dashboard always show
+    something useful.
+    """
+    import httpx
+
+    rest_url, api_key = _top_buys_rest_config()
+    if not rest_url or not api_key:
+        return None
+
+    if isinstance(run_date, date):
+        run_date = run_date.isoformat()
+
+    headers = {"apikey": api_key, "Accept": "application/json"}
+    try:
+        with httpx.Client(timeout=20) as client:
+            rows: list[dict[str, Any]] = []
+            if run_date:
+                resp = client.get(
+                    f"{rest_url}/{_SUPABASE_TABLE_TOP_RUNS}"
+                    f"?select=*&run_date=eq.{run_date}&limit=1",
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                rows = resp.json()
+                if not rows:
+                    log.warning(
+                        "No top-buys screen persisted for %s — using latest.", run_date
+                    )
+            if not rows:
+                resp = client.get(
+                    f"{rest_url}/{_SUPABASE_TABLE_TOP_RUNS}"
+                    "?select=*&order=run_date.desc&limit=1",
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                rows = resp.json()
+            if not rows:
+                return None
+
+            run = rows[0]
+            resp = client.get(
+                f"{rest_url}/{_SUPABASE_TABLE_TOP_PICKS}"
+                f"?select=*&run_id=eq.{run['id']}&order=rank.asc",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            picks = resp.json()
+
+        return {"run": run, "picks": picks}
+    except Exception as exc:
+        log.warning("Could not fetch top-buys screen from Supabase: %s", exc)
+        return None
 
 
 # ---------------------------------------------------------------------------

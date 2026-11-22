@@ -104,14 +104,12 @@ with tabs[0]:
                 if name in indices:
                     d = indices[name]
                     cols[i].metric(
-                        name, f"{d.get('close',0):,.2f}", f"{d.get('chg_pct',0):+.2f}%"
+                        name, f"{d.get('close', 0):,.2f}", f"{d.get('chg_pct', 0):+.2f}%"
                     )
             if news:
                 with st.expander("Market News"):
                     for n in news[:5]:
-                        st.markdown(
-                            f"**{n.get('title','')}** - {n.get('publisher','')}"
-                        )
+                        st.markdown(f"**{n.get('title', '')}** - {n.get('publisher', '')}")
     except Exception as e:
         st.warning(f"Market data unavailable: {e}")
 
@@ -127,18 +125,14 @@ with tabs[0]:
         )
         if snapshot_df.empty:
             snapshots_df = pd.read_sql(
-                text(
-                    "SELECT * FROM portfolio_snapshots ORDER BY run_date DESC LIMIT 30"
-                ),
+                text("SELECT * FROM portfolio_snapshots ORDER BY run_date DESC LIMIT 30"),
                 engine,
             )
             if not snapshots_df.empty:
                 latest = snapshots_df.iloc[0]
         else:
             snapshots_df = pd.read_sql(
-                text(
-                    "SELECT * FROM portfolio_snapshots ORDER BY run_date DESC LIMIT 30"
-                ),
+                text("SELECT * FROM portfolio_snapshots ORDER BY run_date DESC LIMIT 30"),
                 engine,
             )
             latest = snapshot_df.iloc[0]
@@ -152,17 +146,13 @@ with tabs[0]:
             c4.metric(
                 "Day Change",
                 f"${latest['day_change_cad']:+,.2f}",
-                f"{latest.get('day_pct',0):+.2f}%",
+                f"{latest.get('day_pct', 0):+.2f}%",
             )
-            c5.metric("All-Time", f"{latest.get('all_time_pct',0):+.2f}%")
+            c5.metric("All-Time", f"{latest.get('all_time_pct', 0):+.2f}%")
 
             # Peak net worth across full snapshot history + compare vs selected date snapshot
-            peak_df = pd.read_sql(
-                text("SELECT net_worth_cad FROM portfolio_snapshots"), engine
-            )
-            peak_nw = (
-                float(peak_df["net_worth_cad"].max()) if not peak_df.empty else 0.0
-            )
+            peak_df = pd.read_sql(text("SELECT net_worth_cad FROM portfolio_snapshots"), engine)
+            peak_nw = float(peak_df["net_worth_cad"].max()) if not peak_df.empty else 0.0
             if peak_nw > 0:
                 change_from_peak_pct = (current_nw - peak_nw) / peak_nw * 100
                 change_from_peak_amt = current_nw - peak_nw
@@ -176,16 +166,11 @@ with tabs[0]:
                     if change_from_peak_amt >= 0
                     else f"-${abs(change_from_peak_amt):,.2f}"
                 )
-                st.caption(
-                    f"Selected vs peak net worth: {change_from_peak_pct:+.2f}%"
-                    f" ({amt_str})"
-                )
+                st.caption(f"Selected vs peak net worth: {change_from_peak_pct:+.2f}% ({amt_str})")
 
             if len(snapshots_df) > 1:
                 st.subheader("Net Worth Trend")
-                autoscale = st.checkbox(
-                    "Autoscale Y-Axis (Zoom to Visible Range)", value=False
-                )
+                autoscale = st.checkbox("Autoscale Y-Axis (Zoom to Visible Range)", value=False)
 
                 fig = go.Figure()
                 df_plot = snapshots_df.sort_values("run_date")
@@ -218,9 +203,7 @@ with tabs[0]:
                 if autoscale:
                     yaxis_config = {"autorange": True}
 
-                fig.update_layout(
-                    title="", height=400, yaxis=yaxis_config, uirevision="constant"
-                )
+                fig.update_layout(title="", height=400, yaxis=yaxis_config, uirevision="constant")
                 st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
         st.warning(f"Portfolio data unavailable: {e}")
@@ -229,10 +212,7 @@ with tabs[1]:
     st.header("Performance Metrics")
     try:
         snapshots_df = pd.read_sql(
-            text(
-                "SELECT run_date, net_worth_cad FROM portfolio_snapshots ORDER BY"
-                " run_date"
-            ),
+            text("SELECT run_date, net_worth_cad FROM portfolio_snapshots ORDER BY run_date"),
             engine,
         )
         if len(snapshots_df) >= 2:
@@ -251,11 +231,9 @@ with tabs[1]:
             c3.metric("Max Drawdown", f"{mdd:.2%}")
             c4.metric(
                 "Total Return",
-                f"{((values[-1]/values[0])-1):.2%}" if values[0] != 0 else "N/A",
+                f"{((values[-1] / values[0]) - 1):.2%}" if values[0] != 0 else "N/A",
             )
-            fig = px.histogram(
-                x=daily_rets, nbins=30, title="Daily Returns Distribution"
-            )
+            fig = px.histogram(x=daily_rets, nbins=30, title="Daily Returns Distribution")
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Need more history for performance metrics")
@@ -284,18 +262,11 @@ with tabs[2]:
             params={"d": f"{selected_date_str}%"},
         )
 
-        if (
-            not items_df.empty
-            and selected_date_str in items_df["run_date"].astype(str).values
-        ):
-            day_items = items_df[
-                items_df["run_date"].astype(str).str[:10] == selected_date_str
-            ]
+        if not items_df.empty and selected_date_str in items_df["run_date"].astype(str).values:
+            day_items = items_df[items_df["run_date"].astype(str).str[:10] == selected_date_str]
             if not day_items.empty:
                 cash_val = (
-                    float(snapshot_row.iloc[0]["cash_cad"])
-                    if not snapshot_row.empty
-                    else 0.0
+                    float(snapshot_row.iloc[0]["cash_cad"]) if not snapshot_row.empty else 0.0
                 )
 
                 col_a, col_b = st.columns(2)
@@ -503,10 +474,23 @@ with tabs[5]:
                 )
                 show["Upside"] = (show["Upside"].fillna(0) * 100).round(1)
                 cols = [
-                    "#", "Ticker", "Company", "Sector", "Price", "Target",
-                    "Upside", "Score", "Verdict", "Analyst", "Quality",
-                    "Valuation", "Growth", "Momentum", "Underrated",
-                    "Coverage", "Risk Penalty",
+                    "#",
+                    "Ticker",
+                    "Company",
+                    "Sector",
+                    "Price",
+                    "Target",
+                    "Upside",
+                    "Score",
+                    "Verdict",
+                    "Analyst",
+                    "Quality",
+                    "Valuation",
+                    "Growth",
+                    "Momentum",
+                    "Underrated",
+                    "Coverage",
+                    "Risk Penalty",
                 ]
                 st.dataframe(
                     show[[c for c in cols if c in show.columns]],
@@ -587,8 +571,7 @@ with tabs[6]:
                 st.plotly_chart(fig, use_container_width=True)
             bars = pd.read_sql(
                 text(
-                    "SELECT * FROM price_bars_daily WHERE ticker = :t ORDER BY date"
-                    " DESC LIMIT 90"
+                    "SELECT * FROM price_bars_daily WHERE ticker = :t ORDER BY date DESC LIMIT 90"
                 ),
                 engine,
                 params={"t": ticker},

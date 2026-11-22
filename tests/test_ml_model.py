@@ -32,12 +32,20 @@ def synthetic_ohlcv():
 @pytest.fixture
 def training_data(synthetic_ohlcv):
     from src.features import build_features, build_target
+
     feat = build_features(synthetic_ohlcv)
     target = build_target(synthetic_ohlcv["Close"], horizon=1)
     # Drop always-NaN columns (no sentiment/macro in synthetic data)
     price_cols = [
-        "return_1d", "return_5d", "return_20d", "volatility_20d",
-        "rsi_14", "macd_hist", "bb_pctb", "atr_14", "ema_spread",
+        "return_1d",
+        "return_5d",
+        "return_20d",
+        "volatility_20d",
+        "rsi_14",
+        "macd_hist",
+        "bb_pctb",
+        "atr_14",
+        "ema_spread",
         "volume_zscore",
     ]
     feat_price = feat[price_cols]
@@ -60,6 +68,7 @@ class TestTrain:
 
     def test_walk_forward_indices_chronological(self, training_data):
         from sklearn.model_selection import TimeSeriesSplit
+
         X, y = training_data
         tscv = TimeSeriesSplit(n_splits=5)
         for train_idx, test_idx in tscv.split(X.values):
@@ -93,6 +102,7 @@ class TestPredict:
 class TestPersistence:
     def test_save_and_load(self, training_data, tmp_path):
         import src.ml_model as mod
+
         original_dir = mod.MODEL_DIR
         mod.MODEL_DIR = tmp_path
         try:
@@ -109,6 +119,7 @@ class TestPersistence:
 
     def test_load_nonexistent(self, tmp_path):
         import src.ml_model as mod
+
         original_dir = mod.MODEL_DIR
         mod.MODEL_DIR = tmp_path
         try:
@@ -120,6 +131,7 @@ class TestPersistence:
     def test_staleness(self, training_data, tmp_path):
         import joblib
         import src.ml_model as mod
+
         original_dir = mod.MODEL_DIR
         mod.MODEL_DIR = tmp_path
         try:

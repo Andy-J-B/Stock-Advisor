@@ -2,8 +2,16 @@
 
 import pytest
 from src.database import (
-    init_db, db, Account, Holding, NetWorthSnapshot, Setting, Watchlist,
-    get_watchlist, add_to_watchlist, remove_from_watchlist,
+    init_db,
+    db,
+    Account,
+    Holding,
+    NetWorthSnapshot,
+    Setting,
+    Watchlist,
+    get_watchlist,
+    add_to_watchlist,
+    remove_from_watchlist,
 )
 
 
@@ -75,6 +83,7 @@ def test_same_ticker_different_accounts():
 
 def test_net_worth_snapshot():
     from datetime import date
+
     ns = NetWorthSnapshot.create(date=date.today(), value=50000.0)
     assert ns.value == 50000.0
 
@@ -112,6 +121,7 @@ def test_delete_account_leaves_orphan_holdings():
 # Watchlist
 # ---------------------------------------------------------------------------
 
+
 def test_watchlist_add():
     assert add_to_watchlist("AAPL") is True
     assert get_watchlist() == ["AAPL"]
@@ -136,4 +146,3 @@ def test_watchlist_remove():
 
 def test_watchlist_remove_missing():
     assert remove_from_watchlist("TSLA") is False
-

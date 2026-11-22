@@ -22,7 +22,9 @@ from src import data_client, features, indicators, ml_model, anomaly
 from src.sentiment import get_sentiment_engine
 from src.config import load_brief_weights
 from src.database import (
-    get_watchlist, init_db, Account,
+    get_watchlist,
+    init_db,
+    Account,
 )
 
 log = logging.getLogger(__name__)
@@ -37,6 +39,7 @@ _native_lock = threading.Lock()
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class TickerScore:
@@ -97,6 +100,7 @@ def score_sentiment(ticker: str) -> tuple[float, str, str]:
     if not resolved:
         # Try US ticker via ticker_map
         from src.ticker_map import resolve_us_ticker
+
         us = resolve_us_ticker(ticker)
         if us != ticker:
             resolved = data_client.get_ticker_news(us, limit=10)
@@ -201,9 +205,14 @@ def score_ml(ticker: str) -> tuple[float, str]:
         try:
             with _native_lock:
                 result = ml_model.train(X_train, y_train)
-                ml_model.save_model(result["model"], ticker, horizon, metadata={
-                    "cv_accuracy": result["cv_accuracy"],
-                })
+                ml_model.save_model(
+                    result["model"],
+                    ticker,
+                    horizon,
+                    metadata={
+                        "cv_accuracy": result["cv_accuracy"],
+                    },
+                )
             model = result["model"]
         except Exception as exc:
             log.warning("ML training failed for %s: %s", ticker, exc)
@@ -246,8 +255,7 @@ def score_analyst(ticker: str) -> tuple[float, str, str]:
         return 0.0, "No analyst coverage", ""
 
     data["total"] = (
-        data["strong_buy"] + data["buy"] + data["hold"]
-        + data["sell"] + data["strong_sell"]
+        data["strong_buy"] + data["buy"] + data["hold"] + data["sell"] + data["strong_sell"]
     )
     total = max(data["total"], 1)
     bull = data["strong_buy"] + data["buy"]
@@ -394,21 +402,20 @@ def run_brief(
 
     scores: list[TickerScore] = []
     with ThreadPoolExecutor(max_workers=min(workers, len(tickers))) as pool:
-        futures = {
-            pool.submit(compute_composite, t, weights): t
-            for t in tickers
-        }
+        futures = {pool.submit(compute_composite, t, weights): t for t in tickers}
         for future in as_completed(futures):
             ticker = futures[future]
             try:
                 scores.append(future.result())
             except Exception as exc:
                 log.error("Failed to score %s: %s", ticker, exc)
-                scores.append(TickerScore(
-                    ticker=ticker,
-                    composite=0.0,
-                    reasoning=f"Error: {exc}",
-                ))
+                scores.append(
+                    TickerScore(
+                        ticker=ticker,
+                        composite=0.0,
+                        reasoning=f"Error: {exc}",
+                    )
+                )
 
     scores.sort(key=lambda s: s.composite, reverse=True)
 
@@ -595,9 +602,10 @@ def _enrich_run(run: BriefRun) -> None:
     prev_date, prev = _fetch_prev_run_scores()
     if prev_date is not None and prev:
         run.prev_run_date = prev_date
-        prev_ranks = {t: i for i, t in enumerate(
-            sorted(prev, key=lambda t: prev[t]["composite"], reverse=True)
-        )}
+        prev_ranks = {
+            t: i
+            for i, t in enumerate(sorted(prev, key=lambda t: prev[t]["composite"], reverse=True))
+        }
         current_ranks = {s.ticker: i for i, s in enumerate(run.scores)}
         for rank, s in enumerate(run.scores):
             old = prev.get(s.ticker)
@@ -705,9 +713,7 @@ def _supabase_rest_config() -> tuple[str, str]:
     import os
 
     rest_url = os.getenv("DATABASE_REST_URL", "")
-    api_key = os.getenv(
-        "SUPABASE_PUBLISHABLE_KEY", os.getenv("SUPABASE_ANON_KEY", "")
-    )
+    api_key = os.getenv("SUPABASE_PUBLISHABLE_KEY", os.getenv("SUPABASE_ANON_KEY", ""))
     return rest_url, api_key
 
 
@@ -733,8 +739,7 @@ def fetch_brief_universe() -> list[str]:
     try:
         with httpx.Client(timeout=15) as client:
             resp = client.get(
-                f"{rest_url}/{_SUPABASE_TABLE_RUNS}"
-                "?select=id,tickers&order=run_date.desc&limit=1",
+                f"{rest_url}/{_SUPABASE_TABLE_RUNS}?select=id,tickers&order=run_date.desc&limit=1",
                 headers=headers,
             )
             resp.raise_for_status()
@@ -978,7 +983,9 @@ def persist_to_supabase(run: BriefRun) -> bool:
 
         log.info(
             "Persisted brief run (id=%s) for %s with %d tickers.",
-            run_id, run.run_date, len(run.scores),
+            run_id,
+            run.run_date,
+            len(run.scores),
         )
         return True
 
@@ -1004,6 +1011,7 @@ def _load_portfolio_snapshot(client, rest_url, headers) -> dict | None:
     """
     try:
         from src import portfolio
+
         snap = portfolio.snapshot()
     except Exception:
         snap = None
@@ -1021,7 +1029,9 @@ def _load_portfolio_snapshot(client, rest_url, headers) -> dict | None:
     try:
         fallback = _snapshot_from_last_remote_snapshot(client, rest_url, headers)
         if fallback is not None:
-            log.info("Rebuilt portfolio snapshot from last history (%d holdings).", len(fallback["rows"]))
+            log.info(
+                "Rebuilt portfolio snapshot from last history (%d holdings).", len(fallback["rows"])
+            )
             return fallback
     except Exception as exc:
         log.warning("Could not fallback to last snapshot: %s", exc)
@@ -1090,8 +1100,7 @@ def _remote_derived_snapshot(client, rest_url, headers) -> dict | None:
     resp.raise_for_status()
     accounts = resp.json()
     resp = client.get(
-        f"{rest_url}/{_SUPABASE_TABLE_HOLDINGS}"
-        "?select=account,ticker,shares,avg_price",
+        f"{rest_url}/{_SUPABASE_TABLE_HOLDINGS}?select=account,ticker,shares,avg_price",
         headers=headers,
     )
     resp.raise_for_status()
@@ -1100,9 +1109,7 @@ def _remote_derived_snapshot(client, rest_url, headers) -> dict | None:
         return None
 
     fx = data_client.get_usd_to_cad()
-    prices = data_client.get_current_prices_batch(
-        [h["ticker"] for h in holdings]
-    )
+    prices = data_client.get_current_prices_batch([h["ticker"] for h in holdings])
 
     grand = {"value": 0.0, "cost": 0.0, "cash": 0.0, "initial": 0.0, "day_chg": 0.0}
     rows: list[dict] = []
@@ -1145,7 +1152,8 @@ def _remote_derived_snapshot(client, rest_url, headers) -> dict | None:
             log.warning(
                 "portfolio_accounts has no initial_cash — recovered baseline "
                 "cash=%.2f initial=%.2f from snapshot history.",
-                cash, initial,
+                cash,
+                initial,
             )
             grand["cash"] = cash
             grand["initial"] = initial
@@ -1233,9 +1241,14 @@ def _snapshot_from_last_remote_snapshot(client, rest_url, headers) -> dict | Non
         # Re-price holdings with live prices, reusing the same math as
         # _remote_derived_snapshot but sourcing shares/avg_price from history.
         holdings = [
-            {"account": it.get("account", "CAD"), "ticker": it["ticker"],
-             "shares": float(it["shares"]), "avg_price": float(it.get("avg_price") or 0)}
-            for it in items if it.get("ticker")
+            {
+                "account": it.get("account", "CAD"),
+                "ticker": it["ticker"],
+                "shares": float(it["shares"]),
+                "avg_price": float(it.get("avg_price") or 0),
+            }
+            for it in items
+            if it.get("ticker")
         ]
         if not holdings:
             continue
@@ -1244,8 +1257,13 @@ def _snapshot_from_last_remote_snapshot(client, rest_url, headers) -> dict | Non
             prices = data_client.get_current_prices_batch([h["ticker"] for h in holdings])
         except Exception:
             return None
-        grand = {"value": 0.0, "cost": 0.0, "cash": float(row.get("cash_cad") or 0.0),
-                 "initial": 0.0, "day_chg": 0.0}
+        grand = {
+            "value": 0.0,
+            "cost": 0.0,
+            "cash": float(row.get("cash_cad") or 0.0),
+            "initial": 0.0,
+            "day_chg": 0.0,
+        }
         # initial_cash fallback: if snapshot row has it, use it; else 0
         # For history we don't have initial_cash separately, so all_time will be
         # recomputed from cash+value - initial, which may be 0 -> 0% (acceptable).
@@ -1269,13 +1287,20 @@ def _snapshot_from_last_remote_snapshot(client, rest_url, headers) -> dict | Non
             value = h["shares"] * live if live else cost
             day_chg = (live - prev) * h["shares"] if prev else 0.0
             ret = value - cost
-            rows.append({
-                "ticker": h["ticker"], "account": h["account"],
-                "shares": h["shares"], "avg_price": h["avg_price"],
-                "price": live, "day_pct": ((live - prev)/prev*100) if (prev and live) else 0.0,
-                "day_chg_cad": day_chg * mult, "value_cad": value * mult,
-                "return_pct": (ret/cost*100) if cost else 0.0, "return_cad": ret * mult,
-            })
+            rows.append(
+                {
+                    "ticker": h["ticker"],
+                    "account": h["account"],
+                    "shares": h["shares"],
+                    "avg_price": h["avg_price"],
+                    "price": live,
+                    "day_pct": ((live - prev) / prev * 100) if (prev and live) else 0.0,
+                    "day_chg_cad": day_chg * mult,
+                    "value_cad": value * mult,
+                    "return_pct": (ret / cost * 100) if cost else 0.0,
+                    "return_cad": ret * mult,
+                }
+            )
             grand["value"] += value * mult
             grand["cost"] += cost * mult
             grand["day_chg"] += day_chg * mult
@@ -1297,9 +1322,13 @@ def _snapshot_from_last_remote_snapshot(client, rest_url, headers) -> dict | Non
             "cash": grand["cash"],
             "cost": grand["cost"],
             "day_chg": grand["day_chg"],
-            "day_pct": (grand["day_chg"]/(grand["value"]-grand["day_chg"])*100) if (grand["value"]-grand["day_chg"])>0 else 0.0,
-            "return_pct": (grand["value"]-grand["cost"])/grand["cost"]*100 if grand["cost"] else 0.0,
-            "return_cad": grand["value"]-grand["cost"],
+            "day_pct": (grand["day_chg"] / (grand["value"] - grand["day_chg"]) * 100)
+            if (grand["value"] - grand["day_chg"]) > 0
+            else 0.0,
+            "return_pct": (grand["value"] - grand["cost"]) / grand["cost"] * 100
+            if grand["cost"]
+            else 0.0,
+            "return_cad": grand["value"] - grand["cost"],
             "all_time_pct": all_time_pct,
             "all_time_cad": all_time_cad,
             "fx_usd_cad": fx,
@@ -1366,8 +1395,7 @@ def _upsert_portfolio_snapshot_row(client, rest_url, headers, run_id, run, snap:
         if not batch:
             continue
         resp = client.post(
-            f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO_ITEMS}"
-            "?on_conflict=snapshot_id,account,ticker",
+            f"{rest_url}/{_SUPABASE_TABLE_PORTFOLIO_ITEMS}?on_conflict=snapshot_id,account,ticker",
             json=batch,
             headers=headers,
         )
@@ -1414,13 +1442,21 @@ def _upsert_portfolio_holdings(client, rest_url, headers, snap: dict) -> None:
     # doesn't need the fallback.
     if not local and not accounts:
         if snap.get("rows"):
-            log.info("Local DB empty but snapshot has %d holdings — seeding remote holdings from snapshot.", len(snap["rows"]))
+            log.info(
+                "Local DB empty but snapshot has %d holdings — seeding remote holdings from snapshot.",
+                len(snap["rows"]),
+            )
             holdings_payload = [
-                {"account": r["account"], "ticker": r["ticker"], "shares": r["shares"], "avg_price": r["avg_price"]}
+                {
+                    "account": r["account"],
+                    "ticker": r["ticker"],
+                    "shares": r["shares"],
+                    "avg_price": r["avg_price"],
+                }
                 for r in snap["rows"]
             ]
             for i in range(0, len(holdings_payload), 50):
-                batch = holdings_payload[i:i+50]
+                batch = holdings_payload[i : i + 50]
                 resp = client.post(
                     f"{rest_url}/{_SUPABASE_TABLE_HOLDINGS}?on_conflict=account,ticker",
                     json=batch,
@@ -1450,9 +1486,7 @@ def _upsert_portfolio_holdings(client, rest_url, headers, snap: dict) -> None:
         resp.raise_for_status()
 
     # Remove positions that no longer exist locally (sold / removed).
-    resp = client.get(
-        f"{rest_url}/{_SUPABASE_TABLE_HOLDINGS}?select=account", headers=headers
-    )
+    resp = client.get(f"{rest_url}/{_SUPABASE_TABLE_HOLDINGS}?select=account", headers=headers)
     resp.raise_for_status()
     remote_accounts = {r.get("account") for r in resp.json()}
     local_accounts = {r["account"] for r in local}
@@ -1465,9 +1499,7 @@ def _upsert_portfolio_holdings(client, rest_url, headers, snap: dict) -> None:
         resp.raise_for_status()
 
     # Remove accounts that no longer exist locally.
-    resp = client.get(
-        f"{rest_url}/{_SUPABASE_TABLE_ACCOUNTS}?select=account", headers=headers
-    )
+    resp = client.get(f"{rest_url}/{_SUPABASE_TABLE_ACCOUNTS}?select=account", headers=headers)
     resp.raise_for_status()
     remote_acc_names = {r.get("account") for r in resp.json()}
     local_acc_names = {a["account"] for a in accounts}
@@ -1535,8 +1567,7 @@ def fetch_remote_portfolio_snapshot() -> dict | None:
             )
 
         non_empty = [
-            c for c in candidates
-            if c.get("invested_cad") or c.get("cash_cad") or _has_items(c)
+            c for c in candidates if c.get("invested_cad") or c.get("cash_cad") or _has_items(c)
         ]
         if not non_empty:
             return None
@@ -1643,7 +1674,9 @@ def notify_webhook(run: BriefRun, webhook_url: str | None = None) -> bool:
     if run.biggest_movers:
         lines.append("\n**Biggest Movers:**")
         for s in run.biggest_movers:
-            lines.append(f"  • {s.ticker}: {s.composite:+.1f} ({s.score_delta:+.1f} vs {run.prev_run_date})")
+            lines.append(
+                f"  • {s.ticker}: {s.composite:+.1f} ({s.score_delta:+.1f} vs {run.prev_run_date})"
+            )
     if run.anomaly_flips:
         flips = ", ".join(f["ticker"] for f in run.anomaly_flips)
         lines.append(f"\n⚠️ Newly flagged anomalies: {flips}")
@@ -1668,10 +1701,12 @@ def notify_webhook(run: BriefRun, webhook_url: str | None = None) -> bool:
 # Price bar persistence
 # ---------------------------------------------------------------------------
 
+
 def persist_price_bars(tickers: list[str], period: str = "1y") -> int:
     """Persist OHLCV price bars to SQLite for tracked tickers."""
     try:
         from src.services.portfolio_service import PortfolioService
+
         svc = PortfolioService()
         return svc.ensure_price_bars(tickers, period=period)
     except Exception as exc:
@@ -1683,6 +1718,7 @@ def compute_and_store_recommendations(run: BriefRun) -> None:
     """Store recommendations from brief into DB."""
     try:
         from src.database import init_db, Recommendation
+
         init_db()
         for s in run.scores:
             action = "hold"
@@ -1694,7 +1730,15 @@ def compute_and_store_recommendations(run: BriefRun) -> None:
                 action = "trim"
             elif s.composite <= -25:
                 action = "sell"
-            rationale = {"reasoning": s.reasoning, "components": {"sentiment": s.sentiment, "technical": s.technical, "ml": s.ml_pred, "analyst": s.analyst}}
+            rationale = {
+                "reasoning": s.reasoning,
+                "components": {
+                    "sentiment": s.sentiment,
+                    "technical": s.technical,
+                    "ml": s.ml_pred,
+                    "analyst": s.analyst,
+                },
+            }
             constraints = {"overexposed": s.overexposed, "portfolio_weight": s.portfolio_weight}
             Recommendation.get_or_create(
                 ticker=s.ticker,

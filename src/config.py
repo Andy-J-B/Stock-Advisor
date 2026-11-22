@@ -31,11 +31,15 @@ def load_settings() -> dict:
 def update_allocation(conservative: int, moderate: int, aggressive: int):
     init_db()
     Setting.get_or_create(key="risk_allocation", defaults={"value": "{}"})
-    Setting.update(value=json.dumps({
-        "conservative": conservative,
-        "moderate": moderate,
-        "aggressive": aggressive,
-    })).where(Setting.key == "risk_allocation").execute()
+    Setting.update(
+        value=json.dumps(
+            {
+                "conservative": conservative,
+                "moderate": moderate,
+                "aggressive": aggressive,
+            }
+        )
+    ).where(Setting.key == "risk_allocation").execute()
 
 
 def load_brief_weights() -> dict[str, float]:

@@ -62,9 +62,12 @@ def test_load_brief_weights_partial_custom():
 
 
 def test_load_brief_weights_normalizes():
-    config.update_brief_weights({
-        "sentiment": 0.5, "technical": 0.5,
-    })
+    config.update_brief_weights(
+        {
+            "sentiment": 0.5,
+            "technical": 0.5,
+        }
+    )
     w = config.load_brief_weights()
     # Merged with defaults then normalized to sum 1.0
     assert w["sentiment"] == w["technical"]

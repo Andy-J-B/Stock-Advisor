@@ -50,9 +50,7 @@ def train(
     feature_names = list(features.columns)
 
     if len(X) < n_splits + 1:
-        raise ValueError(
-            f"Not enough data for {n_splits}-fold TimeSeriesSplit: {len(X)} rows."
-        )
+        raise ValueError(f"Not enough data for {n_splits}-fold TimeSeriesSplit: {len(X)} rows.")
 
     tscv = TimeSeriesSplit(n_splits=n_splits)
     fold_accuracies: list[float] = []

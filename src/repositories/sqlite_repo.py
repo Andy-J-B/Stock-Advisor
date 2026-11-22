@@ -16,7 +16,12 @@ class SqlitePortfolioRepo:
     def get_accounts(self) -> list[dict[str, Any]]:
         init_db()
         return [
-            {"name": a.name, "cash": a.cash, "initial_cash": a.initial_cash, "currency": getattr(a, "currency", "CAD")}
+            {
+                "name": a.name,
+                "cash": a.cash,
+                "initial_cash": a.initial_cash,
+                "currency": getattr(a, "currency", "CAD"),
+            }
             for a in Account.select()
         ]
 
@@ -26,7 +31,12 @@ class SqlitePortfolioRepo:
         if account:
             q = q.join(Account).where(Account.name == account.upper())
         return [
-            {"account": h.account.name, "ticker": h.ticker, "shares": h.shares, "avg_price": h.avg_price}
+            {
+                "account": h.account.name,
+                "ticker": h.ticker,
+                "shares": h.shares,
+                "avg_price": h.avg_price,
+            }
             for h in q
         ]
 
@@ -40,22 +50,28 @@ class SqlitePortfolioRepo:
 
     def get_net_worth_history(self) -> dict[str, float]:
         init_db()
-        return {str(s.date): s.value for s in NetWorthSnapshot.select().order_by(NetWorthSnapshot.date)}
+        return {
+            str(s.date): s.value for s in NetWorthSnapshot.select().order_by(NetWorthSnapshot.date)
+        }
 
 
 class SqliteMarketRepo:
-    def get_price_bars(self, ticker: str, start: str | None = None, end: str | None = None) -> list[dict[str, Any]]:
+    def get_price_bars(
+        self, ticker: str, start: str | None = None, end: str | None = None
+    ) -> list[dict[str, Any]]:
         init_db()
         q = PriceBar.select().where(PriceBar.ticker == ticker.upper()).order_by(PriceBar.date)
         if start:
             try:
                 from datetime import date as _date
+
                 q = q.where(PriceBar.date >= _date.fromisoformat(start))
             except Exception:
                 pass
         if end:
             try:
                 from datetime import date as _date
+
                 q = q.where(PriceBar.date <= _date.fromisoformat(end))
             except Exception:
                 pass

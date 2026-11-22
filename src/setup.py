@@ -15,9 +15,7 @@ PORTFOLIO_FILE = DATA_DIR / "portfolio.json"
 
 def initialize_app():
     if not DATA_DIR.exists():
-        console.print(
-            "[bold yellow]First time setup: Creating data directories...[/bold yellow]"
-        )
+        console.print("[bold yellow]First time setup: Creating data directories...[/bold yellow]")
         DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     if not PORTFOLIO_FILE.exists():
@@ -30,9 +28,7 @@ def initialize_app():
         # risk-profile prompts, so fall back to a sensible default instead of
         # blocking on stdin (which aborts with EOF in GitHub Actions).
         if sys.stdin.isatty() and not os.environ.get("CI"):
-            console.print(
-                "\n[bold cyan]Let's configure your advisor risk profile![/bold cyan]"
-            )
+            console.print("\n[bold cyan]Let's configure your advisor risk profile![/bold cyan]")
             console.print(
                 "Allocate your portfolio across three categories (must total 100%). \n[Convervative (Safe Assets) /Moderate (Blue chip)/Aggressive (Growth/Tech)]"
             )

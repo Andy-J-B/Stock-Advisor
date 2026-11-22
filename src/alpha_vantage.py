@@ -22,10 +22,10 @@ from src.database import cache_get, cache_set
 load_dotenv()
 
 # TTL constants (seconds)
-TTL_PRICE = 300       # 5 min
-TTL_NEWS = 1800       # 30 min
+TTL_PRICE = 300  # 5 min
+TTL_NEWS = 1800  # 30 min
 TTL_FUNDAMENTALS = 86400  # 24 h
-TTL_TECHNICAL = 300   # 5 min
+TTL_TECHNICAL = 300  # 5 min
 TTL_ANALYTICS = 86400  # 24 h
 TTL_TOP_MOVES = 1800  # 30 min
 
@@ -102,6 +102,7 @@ def get_daily_price(ticker: str) -> Tuple[float, float]:
 #    NOTE: FX rates are served by data_client.get_usd_to_cad().
 # ----------------------------------------------------------------------
 
+
 # ----------------------------------------------------------------------
 # 3. Macro-level news (Alpha "NEWS_SENTIMENT")
 # ----------------------------------------------------------------------
@@ -116,7 +117,13 @@ def get_macro_news(limit: int = 5) -> List[Dict[str, Any]]:
         return cached
 
     if not _has_key():
-        fallback = [{"title": "Markets await new data as volatility continues.", "publisher": "System", "link": ""}]
+        fallback = [
+            {
+                "title": "Markets await new data as volatility continues.",
+                "publisher": "System",
+                "link": "",
+            }
+        ]
         cache_set(cache_key, fallback)
         return fallback
 

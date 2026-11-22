@@ -101,8 +101,7 @@ class TestScore:
     def test_positive_headline(self):
         outputs = [[_fake_pipeline_output("positive", 0.91)]]
         engine = _make_engine(outputs)
-        with patch("src.sentiment.cache_get", return_value=None), \
-             patch("src.sentiment.cache_set"):
+        with patch("src.sentiment.cache_get", return_value=None), patch("src.sentiment.cache_set"):
             result = engine.score("Apple reports record-breaking quarterly earnings")
         assert result["label"] == "positive"
         assert result["compound"] > 0.5
@@ -110,8 +109,7 @@ class TestScore:
     def test_negative_headline(self):
         outputs = [[_fake_pipeline_output("negative", 0.87)]]
         engine = _make_engine(outputs)
-        with patch("src.sentiment.cache_get", return_value=None), \
-             patch("src.sentiment.cache_set"):
+        with patch("src.sentiment.cache_get", return_value=None), patch("src.sentiment.cache_set"):
             result = engine.score("Company files for bankruptcy after fraud scandal")
         assert result["label"] == "negative"
         assert result["compound"] < -0.5
@@ -128,7 +126,13 @@ class TestScore:
         assert result["label"] == "neutral"
 
     def test_cache_hit_skips_pipeline(self):
-        cached = {"label": "positive", "positive": 0.8, "neutral": 0.15, "negative": 0.05, "compound": 0.75}
+        cached = {
+            "label": "positive",
+            "positive": 0.8,
+            "neutral": 0.15,
+            "negative": 0.05,
+            "compound": 0.75,
+        }
         engine = _make_engine([])
         with patch("src.sentiment.cache_get", return_value=cached):
             result = engine.score("Some headline")
@@ -144,8 +148,7 @@ class TestScore:
 class TestScoreBatch:
     def test_empty_list(self):
         engine = _make_engine([])
-        with patch("src.sentiment.cache_get", return_value=None), \
-             patch("src.sentiment.cache_set"):
+        with patch("src.sentiment.cache_get", return_value=None), patch("src.sentiment.cache_set"):
             assert engine.score_batch([]) == []
 
     def test_preserves_order(self):
@@ -156,8 +159,7 @@ class TestScoreBatch:
         ]
         engine = _make_engine([])
         engine._pipe = MagicMock(return_value=batch_result)
-        with patch("src.sentiment.cache_get", return_value=None), \
-             patch("src.sentiment.cache_set"):
+        with patch("src.sentiment.cache_get", return_value=None), patch("src.sentiment.cache_set"):
             results = engine.score_batch(["Good", "Bad", "Meh"])
         assert len(results) == 3
         assert results[0]["label"] == "positive"
@@ -165,7 +167,13 @@ class TestScoreBatch:
         assert results[2]["label"] == "neutral"
 
     def test_mixed_cache_hits(self):
-        cached = {"label": "neutral", "positive": 0.1, "neutral": 0.8, "negative": 0.1, "compound": 0.0}
+        cached = {
+            "label": "neutral",
+            "positive": 0.1,
+            "neutral": 0.8,
+            "negative": 0.1,
+            "compound": 0.0,
+        }
         batch_result = [_fake_pipeline_output("positive", 0.9)]
         engine = _make_engine([])
         engine._pipe = MagicMock(return_value=batch_result)
@@ -180,8 +188,10 @@ class TestScoreBatch:
                 return cached
             return None
 
-        with patch("src.sentiment.cache_get", side_effect=fake_cache_get), \
-             patch("src.sentiment.cache_set"):
+        with (
+            patch("src.sentiment.cache_get", side_effect=fake_cache_get),
+            patch("src.sentiment.cache_set"),
+        ):
             results = engine.score_batch(["cached headline", "new headline"])
         assert len(results) == 2
         assert results[0] == cached
@@ -220,6 +230,7 @@ class TestAggregation:
 class TestSingleton:
     def test_returns_same_instance(self):
         import src.sentiment as mod
+
         mod._engine = None
         with patch.object(FinBertSentiment, "__init__", return_value=None):
             e1 = get_sentiment_engine()

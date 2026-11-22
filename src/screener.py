@@ -57,9 +57,9 @@ _UA = "StockAdvisor/1.0 (personal finance research CLI)"
 _http = httpx.Client(timeout=20, headers={"User-Agent": _UA})
 
 # Cache TTLs (seconds)
-TTL_UNIVERSE = 7 * 86400    # constituent list — rarely changes
-TTL_ANALYST = 24 * 3600     # analyst consensus / revisions — updates daily
-TTL_MARKET = 3600           # technical snapshot — intraday is enough
+TTL_UNIVERSE = 7 * 86400  # constituent list — rarely changes
+TTL_ANALYST = 24 * 3600  # analyst consensus / revisions — updates daily
+TTL_MARKET = 3600  # technical snapshot — intraday is enough
 
 # Universe name → (Wikipedia page, column header holding the company name).
 UNIVERSES: dict[str, tuple[str, str]] = {
@@ -86,6 +86,7 @@ SCORE_WEIGHTS = {
 # ---------------------------------------------------------------------------
 # Small numeric helpers
 # ---------------------------------------------------------------------------
+
 
 def _num(value: Any) -> Optional[float]:
     """Return *value* as a finite float, else ``None``."""
@@ -164,6 +165,7 @@ def _exp_upside_score(upside: Optional[float]) -> Optional[float]:
 # Universe
 # ---------------------------------------------------------------------------
 
+
 def fetch_universe(name: str) -> dict[str, str]:
     """Return ``{symbol: company_name}`` for a named universe (cached 7d)."""
     if name not in UNIVERSES:
@@ -183,7 +185,11 @@ def fetch_universe(name: str) -> dict[str, str]:
         for tbl in soup.find_all("table", class_="wikitable"):
             headers = [th.get_text(strip=True) for th in tbl.find_all("th")][:12]
             sym_idx = next(
-                (i for i, h in enumerate(headers) if "symbol" in h.lower() or "ticker" in h.lower()),
+                (
+                    i
+                    for i, h in enumerate(headers)
+                    if "symbol" in h.lower() or "ticker" in h.lower()
+                ),
                 None,
             )
             name_idx = next(
@@ -215,6 +221,7 @@ def fetch_universe(name: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Analyst consensus + revisions
 # ---------------------------------------------------------------------------
+
 
 def _analyst(ticker: str) -> Optional[dict[str, Any]]:
     """Fetch analyst consensus + price target for one ticker (cached 24h)."""
@@ -371,6 +378,7 @@ def conviction_label(d: dict[str, Any]) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 # Fundamental / technical enrichment
 # ---------------------------------------------------------------------------
+
 
 def _fundamentals(ticker: str) -> dict[str, Any]:
     """Normalize the useful parts of yfinance's large ``info`` dict."""
@@ -562,6 +570,7 @@ def _enrich(
 # Scoring pillars (each 0..100)
 # ---------------------------------------------------------------------------
 
+
 def _score_analyst(
     row: dict[str, Any],
     fund: dict[str, Any],
@@ -597,19 +606,27 @@ def _score_analyst(
         ]
     rev_score, rev_cov = _weighted(revision_parts) if revision_parts else (None, 0.0)
 
-    score, coverage_ratio = _weighted([
-        (consensus, 0.30),
-        (mean_score, 0.15),
-        (upside_score, 0.25),
-        (coverage, 0.10),
-        (confidence, 0.10),
-        (rev_score if rev_cov > 0 else None, 0.10),
-    ])
+    score, coverage_ratio = _weighted(
+        [
+            (consensus, 0.30),
+            (mean_score, 0.15),
+            (upside_score, 0.25),
+            (coverage, 0.10),
+            (confidence, 0.10),
+            (rev_score if rev_cov > 0 else None, 0.10),
+        ]
+    )
 
-    label, _ = rating_label({
-        "strong_buy": sb, "buy": b, "hold": int(row.get("hold") or 0),
-        "sell": s, "strong_sell": ss, "total": total,
-    })
+    label, _ = rating_label(
+        {
+            "strong_buy": sb,
+            "buy": b,
+            "hold": int(row.get("hold") or 0),
+            "sell": s,
+            "strong_sell": ss,
+            "total": total,
+        }
+    )
     bits = [f"{label} ({total} analysts)"]
     if upside_score is not None:
         bits.append(f"{row.get('upside', 0) * 100:.0f}% mean upside")
@@ -925,19 +942,21 @@ def _score_row(row: dict[str, Any]) -> dict[str, Any]:
         1,
     )
 
-    row.update({
-        "analyst_score": analyst,
-        "quality_score": quality,
-        "valuation_score": valuation,
-        "growth_score": growth,
-        "momentum_score": momentum,
-        "underrated_score": underrated,
-        "score": score,
-        "data_coverage": round(data_coverage, 2),
-        "risk_penalty": risk_penalty,
-        "risk_flags": risk_flags,
-        "score_reasons": [a_reason, q_reason, v_reason, g_reason, m_reason],
-    })
+    row.update(
+        {
+            "analyst_score": analyst,
+            "quality_score": quality,
+            "valuation_score": valuation,
+            "growth_score": growth,
+            "momentum_score": momentum,
+            "underrated_score": underrated,
+            "score": score,
+            "data_coverage": round(data_coverage, 2),
+            "risk_penalty": risk_penalty,
+            "risk_flags": risk_flags,
+            "score_reasons": [a_reason, q_reason, v_reason, g_reason, m_reason],
+        }
+    )
     row["tags"] = _tags(row, fund, tech, rev)
     row["verdict"], row["verdict_color"] = conviction_label(row)
     return row
@@ -946,6 +965,7 @@ def _score_row(row: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Screening pipeline
 # ---------------------------------------------------------------------------
+
 
 def _resolve_symbols(symbols: list[str]) -> tuple[list[str], dict[str, str]]:
     """Map Canadian tickers to US equivalents for screening; dedupe."""
@@ -1007,8 +1027,7 @@ def screen(
             continue
         data = dict(data)
         data["total"] = (
-            data["strong_buy"] + data["buy"] + data["hold"]
-            + data["sell"] + data["strong_sell"]
+            data["strong_buy"] + data["buy"] + data["hold"] + data["sell"] + data["strong_sell"]
         )
         if data["total"] < min_analysts:
             continue
@@ -1054,9 +1073,7 @@ def _top_buys_rest_config() -> tuple[str, str]:
     import os
 
     rest_url = os.getenv("DATABASE_REST_URL", "")
-    api_key = os.getenv(
-        "SUPABASE_PUBLISHABLE_KEY", os.getenv("SUPABASE_ANON_KEY", "")
-    )
+    api_key = os.getenv("SUPABASE_PUBLISHABLE_KEY", os.getenv("SUPABASE_ANON_KEY", ""))
     return rest_url, api_key
 
 
@@ -1076,38 +1093,40 @@ def _json_safe(value: Any) -> Any:
 
 def _pick_payload(pick: dict[str, Any], run_id: Any, rank: int) -> dict[str, Any]:
     """Flatten one screen result into a `top_buys_picks` row."""
-    return _json_safe({
-        "run_id": run_id,
-        "rank": rank,
-        "symbol": pick.get("symbol"),
-        "company": pick.get("company") or None,
-        "sector": pick.get("sector") or None,
-        "price": pick.get("current"),
-        "target": pick.get("target"),
-        "target_low": pick.get("target_low"),
-        "target_high": pick.get("target_high"),
-        "upside": pick.get("upside"),
-        "score": pick.get("score"),
-        "verdict": pick.get("verdict"),
-        "tags": pick.get("tags") or [],
-        "score_reasons": pick.get("score_reasons") or [],
-        "risk_flags": pick.get("risk_flags") or [],
-        "analyst_score": pick.get("analyst_score"),
-        "quality_score": pick.get("quality_score"),
-        "valuation_score": pick.get("valuation_score"),
-        "growth_score": pick.get("growth_score"),
-        "momentum_score": pick.get("momentum_score"),
-        "underrated_score": pick.get("underrated_score"),
-        "strong_buy": pick.get("strong_buy"),
-        "buy": pick.get("buy"),
-        "hold": pick.get("hold"),
-        "sell": pick.get("sell"),
-        "strong_sell": pick.get("strong_sell"),
-        "total_analysts": pick.get("total"),
-        "data_coverage": pick.get("data_coverage"),
-        "risk_penalty": pick.get("risk_penalty"),
-        "revisions": pick.get("revisions") or {},
-    })
+    return _json_safe(
+        {
+            "run_id": run_id,
+            "rank": rank,
+            "symbol": pick.get("symbol"),
+            "company": pick.get("company") or None,
+            "sector": pick.get("sector") or None,
+            "price": pick.get("current"),
+            "target": pick.get("target"),
+            "target_low": pick.get("target_low"),
+            "target_high": pick.get("target_high"),
+            "upside": pick.get("upside"),
+            "score": pick.get("score"),
+            "verdict": pick.get("verdict"),
+            "tags": pick.get("tags") or [],
+            "score_reasons": pick.get("score_reasons") or [],
+            "risk_flags": pick.get("risk_flags") or [],
+            "analyst_score": pick.get("analyst_score"),
+            "quality_score": pick.get("quality_score"),
+            "valuation_score": pick.get("valuation_score"),
+            "growth_score": pick.get("growth_score"),
+            "momentum_score": pick.get("momentum_score"),
+            "underrated_score": pick.get("underrated_score"),
+            "strong_buy": pick.get("strong_buy"),
+            "buy": pick.get("buy"),
+            "hold": pick.get("hold"),
+            "sell": pick.get("sell"),
+            "strong_sell": pick.get("strong_sell"),
+            "total_analysts": pick.get("total"),
+            "data_coverage": pick.get("data_coverage"),
+            "risk_penalty": pick.get("risk_penalty"),
+            "revisions": pick.get("revisions") or {},
+        }
+    )
 
 
 def persist_screen(
@@ -1133,8 +1152,7 @@ def persist_screen(
     rest_url, api_key = _top_buys_rest_config()
     if not rest_url or not api_key:
         log.warning(
-            "DATABASE_REST_URL / SUPABASE_PUBLISHABLE_KEY not set — "
-            "skipping top-buys persist."
+            "DATABASE_REST_URL / SUPABASE_PUBLISHABLE_KEY not set — skipping top-buys persist."
         )
         return False
 
@@ -1148,16 +1166,18 @@ def persist_screen(
         "Content-Type": "application/json",
         "Prefer": "resolution=merge-duplicates",
     }
-    run_payload = _json_safe({
-        "run_date": run_date.isoformat(),
-        "generated_at": generated_at.isoformat(),
-        "universe": universe,
-        "pick_limit": limit if limit is not None else len(picks),
-        "min_analysts": min_analysts,
-        "weights_used": dict(SCORE_WEIGHTS),
-        "picks_count": len(picks),
-        "narrative": narrative or None,
-    })
+    run_payload = _json_safe(
+        {
+            "run_date": run_date.isoformat(),
+            "generated_at": generated_at.isoformat(),
+            "universe": universe,
+            "pick_limit": limit if limit is not None else len(picks),
+            "min_analysts": min_analysts,
+            "weights_used": dict(SCORE_WEIGHTS),
+            "picks_count": len(picks),
+            "narrative": narrative or None,
+        }
+    )
 
     try:
         with httpx.Client(timeout=30) as client:
@@ -1188,13 +1208,11 @@ def persist_screen(
                 log.warning("Could not clear previous top-buys picks: %s", exc)
 
             payloads = [
-                _pick_payload(pick, run_id, rank)
-                for rank, pick in enumerate(picks, start=1)
+                _pick_payload(pick, run_id, rank) for rank, pick in enumerate(picks, start=1)
             ]
             for i in range(0, len(payloads), 50):
                 resp = client.post(
-                    f"{rest_url}/{_SUPABASE_TABLE_TOP_PICKS}"
-                    "?on_conflict=run_id,symbol",
+                    f"{rest_url}/{_SUPABASE_TABLE_TOP_PICKS}?on_conflict=run_id,symbol",
                     json=payloads[i : i + 50],
                     headers=headers,
                 )
@@ -1202,7 +1220,9 @@ def persist_screen(
 
         log.info(
             "Persisted top-buys screen (id=%s) for %s with %d picks.",
-            run_id, run_date, len(picks),
+            run_id,
+            run_date,
+            len(picks),
         )
         return True
     except Exception as exc:
@@ -1240,13 +1260,10 @@ def fetch_screen(run_date: date | str | None = None) -> dict[str, Any] | None:
                 resp.raise_for_status()
                 rows = resp.json()
                 if not rows:
-                    log.warning(
-                        "No top-buys screen persisted for %s — using latest.", run_date
-                    )
+                    log.warning("No top-buys screen persisted for %s — using latest.", run_date)
             if not rows:
                 resp = client.get(
-                    f"{rest_url}/{_SUPABASE_TABLE_TOP_RUNS}"
-                    "?select=*&order=run_date.desc&limit=1",
+                    f"{rest_url}/{_SUPABASE_TABLE_TOP_RUNS}?select=*&order=run_date.desc&limit=1",
                     headers=headers,
                 )
                 resp.raise_for_status()
@@ -1272,6 +1289,7 @@ def fetch_screen(run_date: date | str | None = None) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 # Deep-dive narrative
 # ---------------------------------------------------------------------------
+
 
 def _fmt_pct(value: Any, digits: int = 0) -> str:
     v = _num(value)
@@ -1371,7 +1389,9 @@ def _fallback_narrative(picks: list[dict[str, Any]]) -> str:
     for p in picks:
         verdict, _ = conviction_label(p)
         lines.append(f"\n### {p['symbol']} — {p.get('company') or ''} ({verdict})")
-        lines.append(f"- **Score:** {p.get('score', 0):.0f}/100 | tags: {', '.join(p.get('tags') or [])}")
+        lines.append(
+            f"- **Score:** {p.get('score', 0):.0f}/100 | tags: {', '.join(p.get('tags') or [])}"
+        )
         for reason in p.get("score_reasons") or []:
             lines.append(f"- {reason}")
         if p.get("risk_flags"):
@@ -1385,9 +1405,7 @@ def deep_dive(picks: list[dict[str, Any]], top: int = 3) -> str:
         return ""
     picks = picks[:top]
 
-    news_batch = data_client.get_ticker_news_batch(
-        [p["symbol"] for p in picks], limit=4
-    )
+    news_batch = data_client.get_ticker_news_batch([p["symbol"] for p in picks], limit=4)
 
     picks_block = "\n".join(_pick_context(p) for p in picks)
 

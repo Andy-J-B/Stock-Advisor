@@ -21,17 +21,18 @@ NEWSAPI_KEY = os.getenv("NEWSAPI_API_KEY", "")
 _http = httpx.Client(timeout=10)
 
 # TTL constants (seconds)
-TTL_PRICE = 300        # 5 min – live prices
-TTL_FX = 3600          # 1 h – exchange rates
-TTL_NEWS = 3600        # 1 h – news headlines
-TTL_INFO = 86400       # 24 h – ticker fundamentals
-TTL_METRICS = 86400    # 24 h – advanced metrics
-TTL_HISTORY = 3600      # 1 h – daily OHLCV bars
+TTL_PRICE = 300  # 5 min – live prices
+TTL_FX = 3600  # 1 h – exchange rates
+TTL_NEWS = 3600  # 1 h – news headlines
+TTL_INFO = 86400  # 24 h – ticker fundamentals
+TTL_METRICS = 86400  # 24 h – advanced metrics
+TTL_HISTORY = 3600  # 1 h – daily OHLCV bars
 
 
 # ---------------------------------------------------------------------------
 # FX rate
 # ---------------------------------------------------------------------------
+
 
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=1, max=4))
 def get_usd_to_cad() -> float:
@@ -40,7 +41,9 @@ def get_usd_to_cad() -> float:
         return cached
 
     primary_url = "https://latest.currency-api.pages.dev/v1/currencies/usd.json"
-    fallback_url = "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json"
+    fallback_url = (
+        "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json"
+    )
     try:
         try:
             response = _http.get(primary_url)
@@ -59,6 +62,7 @@ def get_usd_to_cad() -> float:
 # ---------------------------------------------------------------------------
 # Ticker info / fundamentals
 # ---------------------------------------------------------------------------
+
 
 def get_ticker_info(ticker: str) -> dict:
     """Returns the full yfinance info dict for a ticker (cached 24h)."""
@@ -90,6 +94,7 @@ def get_ticker_info(ticker: str) -> dict:
 # ---------------------------------------------------------------------------
 # Live price
 # ---------------------------------------------------------------------------
+
 
 def get_current_price(ticker: str) -> tuple[float, float]:
     """Returns (current_price, previous_close)."""
@@ -126,6 +131,7 @@ def get_current_prices_batch(tickers: list[str]) -> dict[str, tuple[float, float
 # Historical prices
 # ---------------------------------------------------------------------------
 
+
 def get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame:
     """Fetch daily OHLCV history for *ticker* (cached 1 h).
 
@@ -137,9 +143,7 @@ def get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame:
     if cached is not None:
         if not cached.get("dates"):
             return pd.DataFrame()
-        return pd.DataFrame(
-            cached["data"], index=pd.DatetimeIndex(cached["dates"])
-        )
+        return pd.DataFrame(cached["data"], index=pd.DatetimeIndex(cached["dates"]))
 
     try:
         df = yf.Ticker(ticker).history(period=period)
@@ -161,15 +165,11 @@ def get_price_history(ticker: str, period: str = "1y") -> pd.DataFrame:
     cache_set(cache_key, result)
 
     if result["dates"]:
-        return pd.DataFrame(
-            result["data"], index=pd.DatetimeIndex(result["dates"])
-        )
+        return pd.DataFrame(result["data"], index=pd.DatetimeIndex(result["dates"]))
     return pd.DataFrame()
 
 
-def get_close_prices(
-    tickers: list[str], period: str = "1y", min_rows: int = 1
-) -> pd.DataFrame:
+def get_close_prices(tickers: list[str], period: str = "1y", min_rows: int = 1) -> pd.DataFrame:
     """Fetch aligned daily close prices for multiple tickers.
 
     Tickers with fewer than *min_rows* of history are excluded, so one
@@ -194,6 +194,7 @@ def get_close_prices(
 # Advanced metrics (FMP + yfinance fallback)
 # ---------------------------------------------------------------------------
 
+
 def get_advanced_metrics(ticker: str) -> dict:
     """Fetches comprehensive financial data for the Deep-Dive report."""
     cache_key = f"metrics:{ticker}"
@@ -217,7 +218,7 @@ def get_advanced_metrics(ticker: str) -> dict:
                     "Debt to Equity": round(m.get("debtToEquityTTM", 0), 2),
                     "Revenue Growth (YoY)": "See yfinance",
                     "Dividend Yield": f"{m.get('dividendYieldPercentageTTM', 0):.2f}%",
-                    "Free Cash Flow": f"${m.get('freeCashFlowYieldTTM', 0)*100:.2f}% Yield",
+                    "Free Cash Flow": f"${m.get('freeCashFlowYieldTTM', 0) * 100:.2f}% Yield",
                 }
         except Exception:
             pass
@@ -241,7 +242,7 @@ def get_advanced_metrics(ticker: str) -> dict:
                 ),
                 "Profit Margins": (
                     f"{info.get('profitMargins', 0) * 100:.2f}%"
-                    if info.get('profitMargins')
+                    if info.get("profitMargins")
                     else "N/A"
                 ),
                 "Free Cash Flow": info.get("freeCashflow", "N/A"),
@@ -261,6 +262,7 @@ def get_advanced_metrics(ticker: str) -> dict:
 # News
 # ---------------------------------------------------------------------------
 
+
 def get_macro_news() -> list:
     """Fetches macro market news (Finnhub → NewsAPI → fallback)."""
     cached = cache_get("macro_news", TTL_NEWS)
@@ -270,12 +272,14 @@ def get_macro_news() -> list:
     result = None
     if FINNHUB_KEY:
         try:
-            res = _http.get(
-                f"https://finnhub.io/api/v1/news?category=general&token={FINNHUB_KEY}"
-            )
+            res = _http.get(f"https://finnhub.io/api/v1/news?category=general&token={FINNHUB_KEY}")
             data = res.json()
             result = [
-                {"title": d.get("headline", ""), "publisher": d.get("source", ""), "link": d.get("url", "")}
+                {
+                    "title": d.get("headline", ""),
+                    "publisher": d.get("source", ""),
+                    "link": d.get("url", ""),
+                }
                 for d in data[:5]
             ]
         except Exception:
@@ -291,7 +295,9 @@ def get_macro_news() -> list:
             pass
 
     if result is None:
-        result = [{"title": "Markets await new data as volatility continues.", "publisher": "System"}]
+        result = [
+            {"title": "Markets await new data as volatility continues.", "publisher": "System"}
+        ]
 
     cache_set("macro_news", result)
     return result
@@ -310,11 +316,15 @@ def get_ticker_news(ticker: str, limit: int = 3) -> list:
         for a in stock.news[:limit]:
             # yfinance nests news under "content" — handle both old and new formats
             c = a.get("content") or a
-            result.append({
-                "title": c.get("title", ""),
-                "publisher": (c.get("provider") or {}).get("displayName", ""),
-                "link": (c.get("canonicalUrl") or c.get("clickThroughUrl") or {}).get("url", ""),
-            })
+            result.append(
+                {
+                    "title": c.get("title", ""),
+                    "publisher": (c.get("provider") or {}).get("displayName", ""),
+                    "link": (c.get("canonicalUrl") or c.get("clickThroughUrl") or {}).get(
+                        "url", ""
+                    ),
+                }
+            )
     except Exception:
         result = [{"title": f"Could not fetch news for {ticker}.", "publisher": "System"}]
 

@@ -59,6 +59,7 @@ class Transaction(BaseModel):
 
 class PositionLot(BaseModel):
     """Lot-level tracking for accurate cost basis."""
+
     account = ForeignKeyField(Account, backref="lots")
     holding = ForeignKeyField(Holding, backref="lots", null=True)
     ticker = CharField(max_length=20)
@@ -77,6 +78,7 @@ class PositionLot(BaseModel):
 
 class PriceBar(BaseModel):
     """Historical OHLCV price bars."""
+
     ticker = CharField(max_length=20)
     date = DateField()
     open = FloatField(null=True)
@@ -196,11 +198,26 @@ class CacheEntry(BaseModel):
 def init_db(skip_migration: bool = False):
     if db.is_closed():
         db.connect()
-    db.create_tables([
-        Account, Holding, Transaction, PositionLot, PriceBar,
-        CorporateAction, Dividend, RealizedPnL, PositionPerformanceDaily,
-        NetWorthSnapshot, FxRate, Recommendation, Setting, Watchlist, CacheEntry
-    ], safe=True)
+    db.create_tables(
+        [
+            Account,
+            Holding,
+            Transaction,
+            PositionLot,
+            PriceBar,
+            CorporateAction,
+            Dividend,
+            RealizedPnL,
+            PositionPerformanceDaily,
+            NetWorthSnapshot,
+            FxRate,
+            Recommendation,
+            Setting,
+            Watchlist,
+            CacheEntry,
+        ],
+        safe=True,
+    )
     if not skip_migration:
         _migrate_from_json()
         _migrate_holdings_to_lots()
@@ -300,6 +317,7 @@ def _migrate_holdings_to_lots():
 # Watchlist helpers
 # ---------------------------------------------------------------------------
 
+
 def get_watchlist() -> list[str]:
     """Return the list of tickers on the watchlist."""
     return [w.ticker for w in Watchlist.select().order_by(Watchlist.added_at)]
@@ -324,6 +342,7 @@ def remove_from_watchlist(ticker: str) -> bool:
 # ---------------------------------------------------------------------------
 # Cache helpers – generic key/value cache backed by SQLite
 # ---------------------------------------------------------------------------
+
 
 def cache_get(key: str, ttl_seconds: int) -> Optional[Any]:
     """Return cached value if fresh, else None."""
@@ -367,7 +386,9 @@ def _migrate_holdings_to_lots():
                     defaults={
                         "remaining_quantity": h.shares,
                         "cost_price": h.avg_price,
-                        "cost_currency": getattr(acc, "currency", "USD") if acc.name == "USD" else "CAD",
+                        "cost_currency": getattr(acc, "currency", "USD")
+                        if acc.name == "USD"
+                        else "CAD",
                         "acquired_at": datetime.now(),
                         "lot_source": "migration",
                     },

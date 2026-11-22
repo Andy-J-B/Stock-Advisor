@@ -98,7 +98,10 @@ def save(data: dict):
     for acc_name, acc_data in data.get("accounts", {}).items():
         account, _ = Account.get_or_create(
             name=acc_name.upper(),
-            defaults={"cash": acc_data.get("cash", 0.0), "initial_cash": acc_data.get("initial_cash", 0.0)},
+            defaults={
+                "cash": acc_data.get("cash", 0.0),
+                "initial_cash": acc_data.get("initial_cash", 0.0),
+            },
         )
         account.cash = acc_data.get("cash", 0.0)
         account.initial_cash = acc_data.get("initial_cash", 0.0)
@@ -114,7 +117,12 @@ def save(data: dict):
                 h.avg_price = h_data["avg_price"]
                 h.save()
             else:
-                Holding.create(account=account, ticker=ticker, shares=h_data["shares"], avg_price=h_data["avg_price"])
+                Holding.create(
+                    account=account,
+                    ticker=ticker,
+                    shares=h_data["shares"],
+                    avg_price=h_data["avg_price"],
+                )
         for ticker in set(existing) - seen:
             existing[ticker].delete_instance()
 
@@ -125,7 +133,11 @@ def ensure_account_exists(portfolio_data: dict, account_name: str) -> tuple[dict
     if "accounts" not in portfolio_data:
         portfolio_data["accounts"] = {}
     if account_name not in portfolio_data["accounts"]:
-        portfolio_data["accounts"][account_name] = {"holdings": {}, "cash": 0.0, "initial_cash": 0.0}
+        portfolio_data["accounts"][account_name] = {
+            "holdings": {},
+            "cash": 0.0,
+            "initial_cash": 0.0,
+        }
     if "initial_cash" not in portfolio_data["accounts"][account_name]:
         portfolio_data["accounts"][account_name]["initial_cash"] = 0.0
 
@@ -140,9 +152,7 @@ def set_initial_cash(account: str, amount: float):
     _auto_sync_portfolio()
 
 
-def deposit_cash(
-    amount: float, currency: str, account: str = "CAD"
-) -> tuple[float, float]:
+def deposit_cash(amount: float, currency: str, account: str = "CAD") -> tuple[float, float]:
     """Deposit cash into an account (default: master CAD wallet).
 
     USD deposits are auto-converted to CAD (at live rates) for CAD accounts;
@@ -218,6 +228,7 @@ def get_cash(account: str) -> float:
 def _auto_sync_portfolio():
     try:
         from src import brief
+
         run = brief.run_brief(fetch_market=False)
         brief.persist_to_supabase(run)
     except Exception:
@@ -310,7 +321,9 @@ def log_net_worth():
 
     today_str = date.today()
     NetWorthSnapshot.get_or_create(date=today_str, defaults={"value": round(total, 2)})
-    NetWorthSnapshot.update(value=round(total, 2)).where(NetWorthSnapshot.date == today_str).execute()
+    NetWorthSnapshot.update(value=round(total, 2)).where(
+        NetWorthSnapshot.date == today_str
+    ).execute()
 
 
 def get_history() -> dict:

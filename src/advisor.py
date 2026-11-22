@@ -112,13 +112,9 @@ a **comprehensive market outlook** in clean Markdown. Include:
     scores = engine.score_batch(titles)
     avg_score = sum(s["compound"] for s in scores) / len(scores) if scores else 0.0
     sentiment_word = (
-        "optimistic"
-        if avg_score > 0.15
-        else "pessimistic" if avg_score < -0.15 else "neutral"
+        "optimistic" if avg_score > 0.15 else "pessimistic" if avg_score < -0.15 else "neutral"
     )
-    return (
-        f"[bold]Market Sentiment Score:[/bold] {avg_score:.2f} " f"({sentiment_word})."
-    )
+    return f"[bold]Market Sentiment Score:[/bold] {avg_score:.2f} ({sentiment_word})."
 
 
 # ----------------------------------------------------------------------
@@ -198,9 +194,13 @@ def analyze_ticker_sentiment(ticker: str, news: list) -> tuple[str, list[dict]]:
     blended = 0.7 * alpha_avg + 0.3 * finbert_avg
 
     if blended >= 0.20:
-        advice = f"[bold green]Bullish (Score: {blended:.2f})[/bold green] – consider buying or holding."
+        advice = (
+            f"[bold green]Bullish (Score: {blended:.2f})[/bold green] – consider buying or holding."
+        )
     elif blended <= -0.20:
-        advice = f"[bold red]Bearish (Score: {blended:.2f})[/bold red] – consider reducing exposure."
+        advice = (
+            f"[bold red]Bearish (Score: {blended:.2f})[/bold red] – consider reducing exposure."
+        )
     else:
         advice = f"[bold yellow]Neutral (Score: {blended:.2f})[/bold yellow] – maintain current position."
 
@@ -229,9 +229,7 @@ def evaluate_portfolio(current_portfolio: dict, user_settings: dict):
     macro_news = av_get_macro_news(limit=7)  # returns list of dicts
 
     # ----- ticker news + sector map ---------------------------------------
-    tickers = {
-        tk.upper() for acc in accounts.values() for tk in acc.get("holdings", {}).keys()
-    }
+    tickers = {tk.upper() for acc in accounts.values() for tk in acc.get("holdings", {}).keys()}
 
     # Resolve Canadian tickers to US equivalents for Alpha Vantage calls.
     # AV does not support .NE/.TO tickers (returns 0/empty).
@@ -291,9 +289,9 @@ portfolio (all values are in CAD unless otherwise noted):
 **TOTAL CASH (Buying Power):** ${total_cash:,.2f}
 **TOTAL HOLDINGS VALUE:** ${total_portfolio_value:,.2f}
 **UNIQUE POSITIONS:** {total_holdings}
-**RISK ALLOCATION Preference:** {allocations.get('conservative',0)}% Conservative,
-{allocations.get('moderate',100)}% Moderate,
-{allocations.get('aggressive',0)}% Aggressive.
+**RISK ALLOCATION Preference:** {allocations.get("conservative", 0)}% Conservative,
+{allocations.get("moderate", 100)}% Moderate,
+{allocations.get("aggressive", 0)}% Aggressive.
 
 **SECTOR EXPOSURE (%)**
 {json.dumps(sector_exposure, indent=2)}
@@ -301,7 +299,7 @@ portfolio (all values are in CAD unless otherwise noted):
 **MACRO ECONOMIC HEADLINES**
 """
     for i, a in enumerate(macro_news[:6], 1):
-        prompt += f"{i}. {a['title']} ({a.get('publisher','')})\n"
+        prompt += f"{i}. {a['title']} ({a.get('publisher', '')})\n"
 
     prompt += "\n**TICKER‑SPECIFIC NEWS (with sentiment scores)**\n"
     for tk, articles in ticker_news.items():
@@ -311,7 +309,7 @@ portfolio (all values are in CAD unless otherwise noted):
         for i, art in enumerate(articles[:3], 1):
             score = art.get("sentiment_score", 0.0)
             label = art.get("sentiment_label", "NEUTRAL")
-            prompt += f"{i}. {art['title']} ({art.get('publisher','')}) – {label} ({score:+.2f})\n"
+            prompt += f"{i}. {art['title']} ({art.get('publisher', '')}) – {label} ({score:+.2f})\n"
 
     prompt += """
 **YOUR TASK**
@@ -339,9 +337,9 @@ Provide a concise, markdown‑formatted analysis containing:
         structural_advice = (
             f"You hold {total_holdings} unique positions and have "
             f"[green]${total_cash:,.2f}[/green] in total buying power.\n"
-            f"Target Allocation: {allocations.get('conservative',0)}% Conservative | "
-            f"{allocations.get('moderate',100)}% Moderate | "
-            f"{allocations.get('aggressive',0)}% Aggressive.\n"
+            f"Target Allocation: {allocations.get('conservative', 0)}% Conservative | "
+            f"{allocations.get('moderate', 100)}% Moderate | "
+            f"{allocations.get('aggressive', 0)}% Aggressive.\n"
         )
         return Panel(structural_advice, title="Portfolio Analysis", border_style="blue")
     else:
@@ -369,9 +367,7 @@ def generate_stock_report(ticker: str, current_portfolio: dict) -> tuple[str, st
     for acc in accounts.values():
         if ticker.upper() in acc.get("holdings", {}):
             h = acc["holdings"][ticker.upper()]
-            position_info = (
-                f"Current Position: {h['shares']} shares @ ${h['avg_price']:.2f} avg."
-            )
+            position_info = f"Current Position: {h['shares']} shares @ ${h['avg_price']:.2f} avg."
 
     # ------------------------------------------------------------------
     # 2️⃣ Current price (actual traded listing)
@@ -470,7 +466,7 @@ def generate_stock_report(ticker: str, current_portfolio: dict) -> tuple[str, st
 Role: Senior Equity Research Analyst (Value & Growth focus).
 
 **TICKER:** {ticker.upper()}
-**DATE:** {date.today().strftime('%B %d, %Y')}
+**DATE:** {date.today().strftime("%B %d, %Y")}
 **PORTFOLIO CONTEXT:** {position_info}
 
 **CURRENT PRICE**

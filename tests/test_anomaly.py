@@ -30,6 +30,7 @@ def synthetic_ohlcv():
 @pytest.fixture
 def features_df(synthetic_ohlcv):
     from src.features import build_features
+
     return build_features(synthetic_ohlcv)
 
 
@@ -52,6 +53,7 @@ class TestIsolationForest:
 class TestDetectAnomalies:
     def test_volume_spike_flagged(self, synthetic_ohlcv):
         from src.features import build_features
+
         feat = build_features(synthetic_ohlcv)
         flagged = detect_anomalies(feat, method="isolation-forest", contamination=0.05)
         # Row 100 (the spike) should be near the anomaly region.

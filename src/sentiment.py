@@ -114,9 +114,7 @@ def _parse_pipeline_output(raw: list[dict]) -> dict[str, Any]:
         "positive": round(scores.get("positive", 0.0), 4),
         "neutral": round(scores.get("neutral", 0.0), 4),
         "negative": round(scores.get("negative", 0.0), 4),
-        "compound": round(
-            scores.get("positive", 0.0) - scores.get("negative", 0.0), 4
-        ),
+        "compound": round(scores.get("positive", 0.0) - scores.get("negative", 0.0), 4),
     }
 
 

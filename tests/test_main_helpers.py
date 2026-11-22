@@ -7,6 +7,7 @@ from main import _price_color, _pct_str, _dol_str, _colorize, _build_holding_row
 # _price_color
 # ---------------------------------------------------------------------------
 
+
 def test_price_color_positive():
     assert _price_color(5.0) == "green"
 
@@ -23,6 +24,7 @@ def test_price_color_negative():
 # _pct_str
 # ---------------------------------------------------------------------------
 
+
 def test_pct_str_positive():
     assert _pct_str(5.5) == "+5.50%"
 
@@ -38,6 +40,7 @@ def test_pct_str_zero():
 # ---------------------------------------------------------------------------
 # _dol_str
 # ---------------------------------------------------------------------------
+
 
 def test_dol_str_positive():
     assert _dol_str(1234.5) == "$1,234.50"
@@ -59,6 +62,7 @@ def test_dol_str_negative():
 # _colorize
 # ---------------------------------------------------------------------------
 
+
 def test_colorize_positive():
     result = _colorize(5.0, "{:+.2f}%")
     assert result == "[green]+5.00%[/green]"
@@ -77,6 +81,7 @@ def test_colorize_zero():
 # ---------------------------------------------------------------------------
 # _build_holding_row
 # ---------------------------------------------------------------------------
+
 
 def test_build_holding_row_normal():
     """Normal case with live_price > 0 and prev_close available."""

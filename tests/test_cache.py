@@ -9,8 +9,17 @@ import pandas as pd
 import pytest
 
 from src.database import (
-    init_db, db, cache_get, cache_set, CacheEntry,
-    Account, Holding, Transaction, NetWorthSnapshot, Setting, Watchlist,
+    init_db,
+    db,
+    cache_get,
+    cache_set,
+    CacheEntry,
+    Account,
+    Holding,
+    Transaction,
+    NetWorthSnapshot,
+    Setting,
+    Watchlist,
 )
 
 
@@ -24,7 +33,9 @@ def memory_db():
     db.connect()
     init_db(skip_migration=True)
     yield
-    db.drop_tables([Account, Holding, Transaction, NetWorthSnapshot, Setting, Watchlist, CacheEntry])
+    db.drop_tables(
+        [Account, Holding, Transaction, NetWorthSnapshot, Setting, Watchlist, CacheEntry]
+    )
     db.close()
     db.init(original)
 
@@ -32,6 +43,7 @@ def memory_db():
 # ---------------------------------------------------------------------------
 # cache_get / cache_set
 # ---------------------------------------------------------------------------
+
 
 class TestCacheHelpers:
     def test_set_and_get(self):
@@ -46,9 +58,9 @@ class TestCacheHelpers:
     def test_ttl_expiry(self):
         cache_set("test:expire_me", [1, 2, 3])
         # Backdate the fetched_at to 2 hours ago
-        CacheEntry.update(
-            fetched_at=datetime.now() - timedelta(hours=2)
-        ).where(CacheEntry.key == "test:expire_me").execute()
+        CacheEntry.update(fetched_at=datetime.now() - timedelta(hours=2)).where(
+            CacheEntry.key == "test:expire_me"
+        ).execute()
 
         result = cache_get("test:expire_me", ttl_seconds=3600)
         assert result is None
@@ -84,6 +96,7 @@ class TestCacheHelpers:
 # ---------------------------------------------------------------------------
 # data_client cache integration (mocked yfinance)
 # ---------------------------------------------------------------------------
+
 
 class TestDataClientCache:
     """Verify data_client functions check cache before hitting the network."""
@@ -185,6 +198,7 @@ class TestDataClientCache:
 # Batch fetching
 # ---------------------------------------------------------------------------
 
+
 class _SequentialPool:
     """Drop-in ThreadPoolExecutor replacement that runs tasks in-process (no threads)."""
 
@@ -215,6 +229,7 @@ class TestBatchFetching:
 
     def test_get_current_prices_batch_empty(self):
         from src.data_client import get_current_prices_batch
+
         assert get_current_prices_batch([]) == {}
 
     def test_get_ticker_news_batch(self):
@@ -246,13 +261,16 @@ class TestBatchFetching:
 # DataProvider protocol
 # ---------------------------------------------------------------------------
 
+
 class TestDataProvider:
     def test_yfinance_adapter_satisfies_protocol(self):
         from src.providers import YFinanceAdapter, DataProvider
+
         adapter = YFinanceAdapter()
         assert isinstance(adapter, DataProvider)
 
     def test_alpha_vantage_adapter_satisfies_protocol(self):
         from src.providers import AlphaVantageAdapter, DataProvider
+
         adapter = AlphaVantageAdapter()
         assert isinstance(adapter, DataProvider)

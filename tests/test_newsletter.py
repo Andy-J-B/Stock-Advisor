@@ -22,23 +22,45 @@ def _fake_run() -> BriefRun:
         },
         scores=[
             TickerScore(
-                ticker="MSFT", composite=42.0, sentiment=30.0, technical=40.0,
-                ml_pred=50.0, analyst=50.0, top_headline="MSFT cloud grows",
+                ticker="MSFT",
+                composite=42.0,
+                sentiment=30.0,
+                technical=40.0,
+                ml_pred=50.0,
+                analyst=50.0,
+                top_headline="MSFT cloud grows",
                 analyst_breakdown="10 bull, 1 hold, 0 bear, 11 total",
-                signal_agreement="High agreement", recommendation="Add / accumulate",
-                price=400, day_change_pct=1.2,
+                signal_agreement="High agreement",
+                recommendation="Add / accumulate",
+                price=400,
+                day_change_pct=1.2,
             ),
             TickerScore(
-                ticker="VCE.TO", composite=-45.0, sentiment=0.0, technical=-30.0,
-                ml_pred=-60.0, analyst=0.0, anomaly_flag=True,
+                ticker="VCE.TO",
+                composite=-45.0,
+                sentiment=0.0,
+                technical=-30.0,
+                ml_pred=-60.0,
+                analyst=0.0,
+                anomaly_flag=True,
                 anomaly_detail="Unusual activity in VCE.TO (1 day):\n  2026-05-06: vol z=2.8",
-                signal_agreement="Conflicted", recommendation="Reduce / consider trimming",
-                portfolio_weight=16.0, price=76.9, day_change_pct=-2.1,
+                signal_agreement="Conflicted",
+                recommendation="Reduce / consider trimming",
+                portfolio_weight=16.0,
+                price=76.9,
+                day_change_pct=-2.1,
             ),
             TickerScore(
-                ticker="WATCHX", composite=5.0, sentiment=5.0, technical=0.0,
-                ml_pred=0.0, analyst=10.0, signal_agreement="Moderate",
-                recommendation="Hold / watch", price=10.0, day_change_pct=0.0,
+                ticker="WATCHX",
+                composite=5.0,
+                sentiment=5.0,
+                technical=0.0,
+                ml_pred=0.0,
+                analyst=10.0,
+                signal_agreement="Moderate",
+                recommendation="Hold / watch",
+                price=10.0,
+                day_change_pct=0.0,
             ),
         ],
     )
@@ -47,23 +69,45 @@ def _fake_run() -> BriefRun:
 def _fake_snapshot() -> dict:
     return {
         "rows": [
-            {"ticker": "VCE.TO", "account": "CAD", "shares": 50, "avg_price": 70.0,
-             "price": 76.9, "day_pct": -2.1, "day_chg_cad": -82.0,
-             "value_cad": 3845.0, "return_pct": 9.9, "return_cad": 345.0},
+            {
+                "ticker": "VCE.TO",
+                "account": "CAD",
+                "shares": 50,
+                "avg_price": 70.0,
+                "price": 76.9,
+                "day_pct": -2.1,
+                "day_chg_cad": -82.0,
+                "value_cad": 3845.0,
+                "return_pct": 9.9,
+                "return_cad": 345.0,
+            },
         ],
-        "net_worth": 50000.0, "invested": 3845.0, "cash": 46155.0,
-        "cost": 3500.0, "day_chg": -82.0, "day_pct": -0.16,
-        "return_pct": 9.9, "return_cad": 345.0,
-        "all_time_pct": 8.1, "all_time_cad": 3750.0, "fx_usd_cad": 1.36,
+        "net_worth": 50000.0,
+        "invested": 3845.0,
+        "cash": 46155.0,
+        "cost": 3500.0,
+        "day_chg": -82.0,
+        "day_pct": -0.16,
+        "return_pct": 9.9,
+        "return_cad": 345.0,
+        "all_time_pct": 8.1,
+        "all_time_cad": 3750.0,
+        "fx_usd_cad": 1.36,
     }
 
 
 def _fake_funds() -> dict:
     return {
-        "MSFT": {"formatted_market_cap": "2.50B", "trailingPE": "30.10",
-                 "forwardPE": "28.00", "priceToBook": "12.00", "dividendYield": "0.80%",
-                 "fiftyTwoWeekHigh": "420.00", "fiftyTwoWeekLow": "300.00",
-                 "targetMeanPrice": "450.00"},
+        "MSFT": {
+            "formatted_market_cap": "2.50B",
+            "trailingPE": "30.10",
+            "forwardPE": "28.00",
+            "priceToBook": "12.00",
+            "dividendYield": "0.80%",
+            "fiftyTwoWeekHigh": "420.00",
+            "fiftyTwoWeekLow": "300.00",
+            "targetMeanPrice": "450.00",
+        },
     }
 
 
@@ -76,17 +120,32 @@ def _fake_top_buys() -> dict:
         },
         "picks": [
             {
-                "rank": 1, "symbol": "MSFT", "company": "Microsoft", "sector": "Technology",
-                "price": 400.0, "target": 450.0, "upside": 0.125, "score": 78.0,
-                "verdict": "Strong Buy", "tags": ["Quality", "Revisions up"],
+                "rank": 1,
+                "symbol": "MSFT",
+                "company": "Microsoft",
+                "sector": "Technology",
+                "price": 400.0,
+                "target": 450.0,
+                "upside": 0.125,
+                "score": 78.0,
+                "verdict": "Strong Buy",
+                "tags": ["Quality", "Revisions up"],
                 "score_reasons": ["Strong ROE and margins", "Reasonable PEG"],
                 "risk_flags": ["high beta"],
             },
             {
-                "rank": 2, "symbol": "JPM", "company": "JPMorgan", "sector": "Financials",
-                "price": 200.0, "target": 220.0, "upside": 0.10, "score": 66.0,
-                "verdict": "Buy", "tags": ["Value"],
-                "score_reasons": ["Cheap on tangible book"], "risk_flags": [],
+                "rank": 2,
+                "symbol": "JPM",
+                "company": "JPMorgan",
+                "sector": "Financials",
+                "price": 200.0,
+                "target": 220.0,
+                "upside": 0.10,
+                "score": 66.0,
+                "verdict": "Buy",
+                "tags": ["Value"],
+                "score_reasons": ["Cheap on tangible book"],
+                "risk_flags": [],
             },
         ],
     }
@@ -95,6 +154,7 @@ def _fake_top_buys() -> dict:
 # ---------------------------------------------------------------------------
 # Bucketing + rendering
 # ---------------------------------------------------------------------------
+
 
 def test_classify_buckets():
     b = newsletter._classify(_fake_run())
@@ -105,8 +165,12 @@ def test_classify_buckets():
 
 
 def test_render_email_contains_sections():
-    html = newsletter.render_email(_fake_run(), _fake_snapshot(), _fake_funds(),
-                                   company_news={"MSFT": [{"title": "MSFT up", "link": ""}]})
+    html = newsletter.render_email(
+        _fake_run(),
+        _fake_snapshot(),
+        _fake_funds(),
+        company_news={"MSFT": [{"title": "MSFT up", "link": ""}]},
+    )
     assert "Executive Summary" in html
     assert "Market Snapshot" in html
     assert "Top Stocks To Consider" in html
@@ -193,10 +257,10 @@ def test_fund_table_flat_renders_values():
 
 def test_render_email_modern_layout():
     html = newsletter.render_email(_fake_run(), _fake_snapshot(), _fake_funds())
-    assert 'class="card"' in html          # rounded card container
-    assert ".thead" in html                # gray header rows
+    assert 'class="card"' in html  # rounded card container
+    assert ".thead" in html  # gray header rows
     assert "prefers-color-scheme: dark" in html  # dark-mode media query
-    assert "max-width: 640px" in html      # responsive media query
+    assert "max-width: 640px" in html  # responsive media query
     assert "MIMEText" not in html
 
 
@@ -222,20 +286,22 @@ def test_ticker_info_retries_on_empty(monkeypatch):
             return {"marketCap": 1e9, "trailingPE": 20.0}
 
     monkeypatch.setattr(newsletter.data_client, "cache_get", lambda k, ttl: None)
-    monkeypatch.setattr(newsletter.data_client, "cache_set",
-                        lambda k, v: calls.__setitem__("stored", v))
+    monkeypatch.setattr(
+        newsletter.data_client, "cache_set", lambda k, v: calls.__setitem__("stored", v)
+    )
     monkeypatch.setattr(newsletter.data_client.yf, "Ticker", FakeTicker)
     monkeypatch.setattr(newsletter.data_client.time, "sleep", lambda s: None)
 
     info = newsletter.data_client.get_ticker_info("ZZZ")
     assert info["marketCap"] == 1e9
-    assert calls["n"] == 2          # second attempt succeeded
+    assert calls["n"] == 2  # second attempt succeeded
     assert calls["stored"]["trailingPE"] == 20.0
 
 
 # ---------------------------------------------------------------------------
 # Delivery
 # ---------------------------------------------------------------------------
+
 
 def test_send_email_with_smtp(monkeypatch):
     sent = {}
@@ -289,7 +355,9 @@ def test_send_email_not_configured(monkeypatch):
 def test_run_newsletter_preview(monkeypatch, tmp_path):
     monkeypatch.setattr(newsletter.brief, "run_brief", lambda fetch_market=False: _fake_run())
     monkeypatch.setattr(newsletter.brief, "fetch_remote_portfolio_snapshot", lambda: None)
-    monkeypatch.setattr(newsletter.portfolio, "snapshot", lambda: {k: v for k, v in _fake_snapshot().items()})
+    monkeypatch.setattr(
+        newsletter.portfolio, "snapshot", lambda: {k: v for k, v in _fake_snapshot().items()}
+    )
     monkeypatch.setattr(newsletter.data_client, "get_ticker_info", lambda t: {})
     monkeypatch.setattr(newsletter.data_client, "get_ticker_news_batch", lambda t, limit=3: {})
     monkeypatch.setattr(newsletter.screener, "fetch_screen", lambda run_date=None: None)

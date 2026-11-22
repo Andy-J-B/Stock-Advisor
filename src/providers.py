@@ -37,18 +37,22 @@ class YFinanceAdapter:
 
     def get_price(self, ticker: str) -> Tuple[float, float]:
         from src import data_client
+
         return data_client.get_current_price(ticker)
 
     def get_ticker_info(self, ticker: str) -> Dict[str, Any]:
         from src import data_client
+
         return data_client.get_ticker_info(ticker)
 
     def get_macro_news(self, limit: int = 5) -> List[Dict[str, Any]]:
         from src import data_client
+
         return data_client.get_macro_news()
 
     def get_ticker_news(self, ticker: str, limit: int = 3) -> List[Dict[str, Any]]:
         from src import data_client
+
         return data_client.get_ticker_news(ticker, limit)
 
 
@@ -57,16 +61,20 @@ class AlphaVantageAdapter:
 
     def get_price(self, ticker: str) -> Tuple[float, float]:
         from src import alpha_vantage
+
         return alpha_vantage.get_daily_price(ticker)
 
     def get_ticker_info(self, ticker: str) -> Dict[str, Any]:
         from src import alpha_vantage
+
         return alpha_vantage.get_company_overview(ticker)
 
     def get_macro_news(self, limit: int = 5) -> List[Dict[str, Any]]:
         from src import alpha_vantage
+
         return alpha_vantage.get_macro_news(limit)
 
     def get_ticker_news(self, ticker: str, limit: int = 3) -> List[Dict[str, Any]]:
         from src import alpha_vantage
+
         return alpha_vantage.get_ticker_news(ticker, limit)

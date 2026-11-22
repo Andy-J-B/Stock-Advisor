@@ -61,9 +61,7 @@ class TestNoLookahead:
         # vol[t] == raw[t-1] for all t
         common = vol.dropna().index
         shifted_raw = raw.shift(1)
-        pd.testing.assert_series_equal(
-            vol.loc[common], shifted_raw.loc[common], check_names=False
-        )
+        pd.testing.assert_series_equal(vol.loc[common], shifted_raw.loc[common], check_names=False)
 
     def test_rsi_is_shifted(self, synthetic_ohlcv):
         close = synthetic_ohlcv["Close"]
@@ -93,6 +91,7 @@ class TestNoLookahead:
     def test_atr_is_shifted(self, synthetic_ohlcv):
         # ATR at row 0 should be NaN because it's shifted
         from src.features import _atr as atr_fn
+
         atr = atr_fn(synthetic_ohlcv["High"], synthetic_ohlcv["Low"], synthetic_ohlcv["Close"])
         assert pd.isna(atr.iloc[0])
 
@@ -126,9 +125,18 @@ class TestBuildFeatures:
 
     def test_feature_names(self, synthetic_ohlcv):
         feat = build_features(synthetic_ohlcv)
-        expected_cols = {"return_1d", "return_5d", "return_20d", "volatility_20d",
-                         "rsi_14", "macd_hist", "bb_pctb", "atr_14", "ema_spread",
-                         "volume_zscore"}
+        expected_cols = {
+            "return_1d",
+            "return_5d",
+            "return_20d",
+            "volatility_20d",
+            "rsi_14",
+            "macd_hist",
+            "bb_pctb",
+            "atr_14",
+            "ema_spread",
+            "volume_zscore",
+        }
         assert expected_cols.issubset(set(feat.columns))
 
 

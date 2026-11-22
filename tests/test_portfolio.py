@@ -25,6 +25,7 @@ def fresh_db():
 # Load
 # ---------------------------------------------------------------------------
 
+
 def test_empty_portfolio():
     p = portfolio.load()
     assert "accounts" in p
@@ -47,6 +48,7 @@ def test_load_with_accounts_in_db():
 # ---------------------------------------------------------------------------
 # Save
 # ---------------------------------------------------------------------------
+
 
 def test_save_and_load():
     data = {"accounts": {"USD": {"holdings": {}, "cash": 500.0, "initial_cash": 1000.0}}}
@@ -73,6 +75,7 @@ def test_save_removes_stale_holdings():
 # ---------------------------------------------------------------------------
 # Add position
 # ---------------------------------------------------------------------------
+
 
 def test_add_position():
     portfolio.add_position("USD", "AAPL", 10, 150.0)
@@ -148,6 +151,7 @@ def test_add_position_cad_to_usd_converts():
 # Remove position
 # ---------------------------------------------------------------------------
 
+
 def test_remove_position_partial():
     portfolio.add_position("USD", "AAPL", 10, 150.0)
     portfolio.remove_position("USD", "AAPL", shares=4)
@@ -192,6 +196,7 @@ def test_remove_from_nonexistent_account():
 # Deposit cash
 # ---------------------------------------------------------------------------
 
+
 def test_deposit_cash_cad():
     amt, rate = portfolio.deposit_cash(1000, "CAD")
     assert amt == 1000.0
@@ -228,6 +233,7 @@ def test_deposit_cash_usd_to_cad_default_account():
 # Sell position
 # ---------------------------------------------------------------------------
 
+
 def test_sell_position_reduces_holdings():
     portfolio.add_position("CAD", "VFV.TO", 10, 50.0)
     portfolio.sell_position("CAD", "VFV.TO", 3, 55.0)
@@ -262,6 +268,7 @@ def test_sell_nonexistent_account():
 # Set initial cash
 # ---------------------------------------------------------------------------
 
+
 def test_set_initial_cash():
     portfolio.set_initial_cash("USD", 5000.0)
     p = portfolio.load()
@@ -283,6 +290,7 @@ def test_set_initial_cash_new_account():
 # Update cash
 # ---------------------------------------------------------------------------
 
+
 def test_update_cash():
     portfolio.update_cash("USD", 10000.0)
     p = portfolio.load()
@@ -299,6 +307,7 @@ def test_update_cash_overwrites():
 # Get cash
 # ---------------------------------------------------------------------------
 
+
 def test_get_cash():
     portfolio.update_cash("CAD", 2500.0)
     assert portfolio.get_cash("CAD") == 2500.0
@@ -311,6 +320,7 @@ def test_get_cash_empty():
 # ---------------------------------------------------------------------------
 # Ensure account exists
 # ---------------------------------------------------------------------------
+
 
 def test_ensure_account_exists():
     p = portfolio.load()
@@ -341,6 +351,7 @@ def test_ensure_account_exists_adds_initial_cash():
 # Get account holdings
 # ---------------------------------------------------------------------------
 
+
 def test_get_account_holdings_empty():
     assert portfolio.get_account_holdings("USD") == {}
 
@@ -360,12 +371,15 @@ def test_get_account_holdings_nonexistent():
 # Log net worth / history
 # ---------------------------------------------------------------------------
 
+
 def test_log_net_worth():
     portfolio.add_position("CAD", "VFV.TO", 10, 50.0)
     portfolio.update_cash("CAD", 1000.0)
+
     # Mock batch to avoid threading + in-memory DB issues
     def _seq_batch(tickers):
         return {t: (0.0, 0.0) for t in tickers}
+
     with patch("src.data_client.get_current_prices_batch", side_effect=_seq_batch):
         portfolio.log_net_worth()
     history = portfolio.get_history()
@@ -381,4 +395,3 @@ def test_log_net_worth_updates_same_day():
 
 def test_get_history_empty():
     assert portfolio.get_history() == {}
-

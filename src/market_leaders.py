@@ -135,11 +135,7 @@ def get_analyst_breakdown(ticker: str) -> dict:
         df = yf.Ticker(ticker).recommendations_summary
         if df is not None and not df.empty:
             # Row "0m" is the current month; fall back to the first row.
-            row = (
-                df[df["period"] == "0m"].iloc[0]
-                if "0m" in set(df["period"])
-                else df.iloc[0]
-            )
+            row = df[df["period"] == "0m"].iloc[0] if "0m" in set(df["period"]) else df.iloc[0]
             out = {
                 "strong_buy": int(row.get("strongBuy", 0)),
                 "buy": int(row.get("buy", 0)),

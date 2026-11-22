@@ -34,14 +34,18 @@ def test_evaluate_portfolio_values_holdings_in_cad(portfolio):
         captured["prompt"] = prompt
         return None
 
-    with patch("src.advisor.av_get_macro_news", return_value=[]), \
-         patch("src.advisor.resolve_tickers", return_value={"MSFT.NE": "MSFT"}), \
-         patch("src.advisor.av_get_ticker_news", return_value=[]), \
-         patch("src.advisor.get_company_overview", return_value={"Sector": "TECHNOLOGY"}), \
-         patch("src.advisor.data_client.get_usd_to_cad", return_value=1.4), \
-         patch("src.advisor.data_client.get_current_prices_batch",
-               return_value={"MSFT.NE": (32.0, 31.0)}), \
-         patch("src.advisor._gemini_generate", side_effect=fake_gemini):
+    with (
+        patch("src.advisor.av_get_macro_news", return_value=[]),
+        patch("src.advisor.resolve_tickers", return_value={"MSFT.NE": "MSFT"}),
+        patch("src.advisor.av_get_ticker_news", return_value=[]),
+        patch("src.advisor.get_company_overview", return_value={"Sector": "TECHNOLOGY"}),
+        patch("src.advisor.data_client.get_usd_to_cad", return_value=1.4),
+        patch(
+            "src.advisor.data_client.get_current_prices_batch",
+            return_value={"MSFT.NE": (32.0, 31.0)},
+        ),
+        patch("src.advisor._gemini_generate", side_effect=fake_gemini),
+    ):
         advisor.evaluate_portfolio(portfolio, settings)
 
     prompt = captured["prompt"]
@@ -57,14 +61,18 @@ def test_evaluate_portfolio_falls_back_without_gemini(portfolio):
     from src import advisor
 
     settings = {"risk_allocation": {}}
-    with patch("src.advisor.av_get_macro_news", return_value=[]), \
-         patch("src.advisor.resolve_tickers", return_value={"MSFT.NE": "MSFT"}), \
-         patch("src.advisor.av_get_ticker_news", return_value=[]), \
-         patch("src.advisor.get_company_overview", return_value={}), \
-         patch("src.advisor.data_client.get_usd_to_cad", return_value=1.4), \
-         patch("src.advisor.data_client.get_current_prices_batch",
-               return_value={"MSFT.NE": (32.0, 31.0)}), \
-         patch("src.advisor._gemini_generate", return_value=None):
+    with (
+        patch("src.advisor.av_get_macro_news", return_value=[]),
+        patch("src.advisor.resolve_tickers", return_value={"MSFT.NE": "MSFT"}),
+        patch("src.advisor.av_get_ticker_news", return_value=[]),
+        patch("src.advisor.get_company_overview", return_value={}),
+        patch("src.advisor.data_client.get_usd_to_cad", return_value=1.4),
+        patch(
+            "src.advisor.data_client.get_current_prices_batch",
+            return_value={"MSFT.NE": (32.0, 31.0)},
+        ),
+        patch("src.advisor._gemini_generate", return_value=None),
+    ):
         result = advisor.evaluate_portfolio(portfolio, settings)
 
     assert getattr(result, "title", None) == "Portfolio Analysis"

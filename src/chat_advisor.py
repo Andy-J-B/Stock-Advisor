@@ -5,6 +5,7 @@ Provides a conversational interface to analyze holdings, get buy/sell recommenda
 based on your specific position (gains, cost basis, allocation), and integrate
 fundamentals, technicals, margin of safety, etc.
 """
+
 from __future__ import annotations
 
 import json
@@ -62,16 +63,18 @@ def get_position_context(ticker: str) -> dict[str, Any]:
                 value = h.shares * live
                 gain = value - cost
                 gain_pct = (gain / cost * 100) if cost > 0 else 0.0
-                context["accounts"].append({
-                    "account": acc.name,
-                    "shares": h.shares,
-                    "avg_price": h.avg_price,
-                    "cost_basis": cost,
-                    "current_price": live,
-                    "market_value": value,
-                    "unrealized_gain_loss": gain,
-                    "unrealized_gain_loss_pct": gain_pct,
-                })
+                context["accounts"].append(
+                    {
+                        "account": acc.name,
+                        "shares": h.shares,
+                        "avg_price": h.avg_price,
+                        "cost_basis": cost,
+                        "current_price": live,
+                        "market_value": value,
+                        "unrealized_gain_loss": gain,
+                        "unrealized_gain_loss_pct": gain_pct,
+                    }
+                )
                 context["total_shares"] += h.shares
                 context["total_cost_basis"] += cost
                 context["current_value"] += value
@@ -80,7 +83,11 @@ def get_position_context(ticker: str) -> dict[str, Any]:
     if context["has_position"] and context["total_shares"] > 0:
         context["avg_cost"] = context["total_cost_basis"] / context["total_shares"]
         context["unrealized_gain_loss"] = context["current_value"] - context["total_cost_basis"]
-        context["unrealized_gain_loss_pct"] = (context["unrealized_gain_loss"] / context["total_cost_basis"] * 100) if context["total_cost_basis"] > 0 else 0.0
+        context["unrealized_gain_loss_pct"] = (
+            (context["unrealized_gain_loss"] / context["total_cost_basis"] * 100)
+            if context["total_cost_basis"] > 0
+            else 0.0
+        )
 
     live_price, _ = data_client.get_current_price(ticker)
     context["current_price"] = live_price if live_price > 0 else context["avg_cost"]
@@ -121,7 +128,9 @@ def get_comprehensive_analysis(ticker: str) -> dict[str, Any]:
         sma20 = get_technical_indicator(us_ticker, "SMA", interval="daily", time_period=20)
         sma50 = get_technical_indicator(us_ticker, "SMA", interval="daily", time_period=50)
         sma200 = get_technical_indicator(us_ticker, "SMA", interval="daily", time_period=200)
-        macd = get_technical_indicator(us_ticker, "MACD", interval="daily", fastperiod=12, slowperiod=26, signalperiod=9)
+        macd = get_technical_indicator(
+            us_ticker, "MACD", interval="daily", fastperiod=12, slowperiod=26, signalperiod=9
+        )
         analysis["technicals"] = {
             "rsi": rsi,
             "sma20": sma20,
@@ -151,10 +160,10 @@ Your job is to analyze a specific stock position in the user's portfolio and giv
 {json.dumps(pos, indent=2)}
 
 ### COMPANY OVERVIEW
-{json.dumps({k: v for k, v in overview.items() if k in ['Symbol', 'Name', 'Sector', 'Industry', 'Description', 'MarketCapitalization', 'PERatio', 'PEGRatio', 'PriceToBookRatio', 'DividendYield', 'EPS', 'RevenueTTM', 'ProfitMargin', 'ReturnOnEquityTTM', '52WeekHigh', '52WeekLow', 'AnalystTargetPrice', 'Recommendation', 'SharesOutstanding']}, indent=2)}
+{json.dumps({k: v for k, v in overview.items() if k in ["Symbol", "Name", "Sector", "Industry", "Description", "MarketCapitalization", "PERatio", "PEGRatio", "PriceToBookRatio", "DividendYield", "EPS", "RevenueTTM", "ProfitMargin", "ReturnOnEquityTTM", "52WeekHigh", "52WeekLow", "AnalystTargetPrice", "Recommendation", "SharesOutstanding"]}, indent=2)}
 
 ### QUESTION FROM USER (if any)
-{question or 'Provide comprehensive buy/sell/hold recommendation'}
+{question or "Provide comprehensive buy/sell/hold recommendation"}
 
 ### ANALYSIS REQUIREMENTS
 Give a thorough response with these sections:

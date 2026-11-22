@@ -18,9 +18,9 @@ def memory_db(monkeypatch):
     # Enrichment backfills live prices; stub the network calls so scoring
     # tests stay hermetic (no yfinance / FX requests).
     monkeypatch.setattr(
-        brief.data_client, "get_current_prices_batch", lambda tickers: {
-            t: (0.0, 0.0) for t in tickers
-        }
+        brief.data_client,
+        "get_current_prices_batch",
+        lambda tickers: {t: (0.0, 0.0) for t in tickers},
     )
     monkeypatch.setattr(brief.data_client, "get_usd_to_cad", lambda: 1.0)
     yield
@@ -32,6 +32,7 @@ def memory_db(monkeypatch):
 # ---------------------------------------------------------------------------
 # Component scorers
 # ---------------------------------------------------------------------------
+
 
 def test_score_sentiment_no_news(monkeypatch):
     monkeypatch.setattr(brief.data_client, "get_ticker_news", lambda *a, **k: [])
@@ -50,8 +51,20 @@ def test_score_sentiment_uses_finbert(monkeypatch):
     class FakeEngine:
         def score_batch(self, texts):
             return [
-                {"label": "positive", "compound": 0.85, "positive": 0.9, "negative": 0.05, "neutral": 0.05},
-                {"label": "positive", "compound": 0.70, "positive": 0.8, "negative": 0.1, "neutral": 0.1},
+                {
+                    "label": "positive",
+                    "compound": 0.85,
+                    "positive": 0.9,
+                    "negative": 0.05,
+                    "neutral": 0.05,
+                },
+                {
+                    "label": "positive",
+                    "compound": 0.70,
+                    "positive": 0.8,
+                    "negative": 0.1,
+                    "neutral": 0.1,
+                },
             ]
 
     monkeypatch.setattr(brief.data_client, "get_ticker_news", lambda *a, **k: news)
@@ -66,6 +79,7 @@ def test_score_sentiment_uses_finbert(monkeypatch):
 
 def test_score_technical_insufficient_data(monkeypatch):
     import pandas as pd
+
     monkeypatch.setattr(brief.data_client, "get_price_history", lambda *a, **k: pd.DataFrame())
     score, reason = brief.score_technical("MSFT")
     assert score == 0.0
@@ -74,6 +88,7 @@ def test_score_technical_insufficient_data(monkeypatch):
 
 def test_score_analyst_no_coverage(monkeypatch):
     import src.screener as screener
+
     monkeypatch.setattr(screener, "_analyst", lambda t: None)
     score, reason, breakdown = brief.score_analyst("MSFT")
     assert score == 0.0
@@ -83,9 +98,15 @@ def test_score_analyst_no_coverage(monkeypatch):
 
 def test_score_analyst_uses_consensus(monkeypatch):
     import src.screener as screener
+
     data = {
-        "current": 100.0, "target": 120.0,
-        "strong_buy": 5, "buy": 10, "hold": 2, "sell": 0, "strong_sell": 0,
+        "current": 100.0,
+        "target": 120.0,
+        "strong_buy": 5,
+        "buy": 10,
+        "hold": 2,
+        "sell": 0,
+        "strong_sell": 0,
     }
     monkeypatch.setattr(screener, "_analyst", lambda t: data)
     score, reason, breakdown = brief.score_analyst("MSFT")
@@ -96,6 +117,7 @@ def test_score_analyst_uses_consensus(monkeypatch):
 
 def test_detect_anomaly_no_data(monkeypatch):
     import pandas as pd
+
     monkeypatch.setattr(brief.data_client, "get_price_history", lambda *a, **k: pd.DataFrame())
     flag, detail = brief.detect_anomaly("MSFT")
     assert flag is False
@@ -105,6 +127,7 @@ def test_detect_anomaly_no_data(monkeypatch):
 # ---------------------------------------------------------------------------
 # Composite score
 # ---------------------------------------------------------------------------
+
 
 def test_compute_composite_basic(monkeypatch):
     monkeypatch.setattr(brief, "score_sentiment", lambda t: (10.0, "news", "Headline A"))
@@ -145,8 +168,12 @@ def test_compute_composite_anomaly_penalty(monkeypatch):
 
 def test_compute_composite_clamps_to_100():
     result = brief.TickerScore(
-        ticker="X", composite=150.0,
-        sentiment=150, technical=120, ml_pred=140, analyst=130,
+        ticker="X",
+        composite=150.0,
+        sentiment=150,
+        technical=120,
+        ml_pred=140,
+        analyst=130,
     )
     assert result.composite == 150.0  # dataclass doesn't clamp; compute does
 
@@ -167,20 +194,25 @@ def test_composite_clamped_in_compute(monkeypatch):
 # run_brief
 # ---------------------------------------------------------------------------
 
+
 def test_run_brief_empty_portfolio():
     run = brief.run_brief(tickers=[])
     assert run.scores == []
 
 
 def test_run_brief_scores_tickers(monkeypatch):
-    monkeypatch.setattr(brief, "compute_composite", lambda t, w: brief.TickerScore(
-        ticker=t,
-        composite=50.0,
-        sentiment=10.0,
-        technical=20.0,
-        ml_pred=30.0,
-        analyst=40.0,
-    ))
+    monkeypatch.setattr(
+        brief,
+        "compute_composite",
+        lambda t, w: brief.TickerScore(
+            ticker=t,
+            composite=50.0,
+            sentiment=10.0,
+            technical=20.0,
+            ml_pred=30.0,
+            analyst=40.0,
+        ),
+    )
     run = brief.run_brief(tickers=["AAPL", "MSFT"])
     assert len(run.scores) == 2
     assert {s.ticker for s in run.scores} == {"AAPL", "MSFT"}
@@ -201,11 +233,17 @@ def test_run_brief_uses_holdings_and_watchlist(monkeypatch):
     acc = Account.create(name="USD", cash=0.0, initial_cash=0.0)
     Holding.create(account=acc, ticker="AAPL", shares=10, avg_price=150.0)
     from src.database import add_to_watchlist
+
     add_to_watchlist("NVDA")
 
-    monkeypatch.setattr(brief, "compute_composite", lambda t, w: brief.TickerScore(
-        ticker=t, composite=0.0,
-    ))
+    monkeypatch.setattr(
+        brief,
+        "compute_composite",
+        lambda t, w: brief.TickerScore(
+            ticker=t,
+            composite=0.0,
+        ),
+    )
 
     run = brief.run_brief()
     assert {s.ticker for s in run.scores} == {"AAPL", "NVDA"}
@@ -214,6 +252,7 @@ def test_run_brief_uses_holdings_and_watchlist(monkeypatch):
 # ---------------------------------------------------------------------------
 # Persistence & notification fallbacks
 # ---------------------------------------------------------------------------
+
 
 def test_persist_without_env(monkeypatch):
     monkeypatch.setattr("os.getenv", lambda k, d="": "" if k == "DATABASE_URL" else d)
@@ -241,6 +280,7 @@ def test_fetch_brief_watchlist_without_env(monkeypatch):
 # Market overview (index moves + top news)
 # ---------------------------------------------------------------------------
 
+
 def _fake_history(closes):
     idx = pd.date_range("2026-09-01", periods=len(closes), freq="D")
     return pd.DataFrame({"Close": closes}, index=idx)
@@ -258,11 +298,13 @@ def test_fetch_market_overview_best_effort(monkeypatch):
 
 def test_fetch_market_overview_captures_data(monkeypatch):
     monkeypatch.setattr(
-        brief.data_client, "get_price_history",
+        brief.data_client,
+        "get_price_history",
         lambda *a, **k: _fake_history([100.0, 101.5]),
     )
     monkeypatch.setattr(
-        brief.data_client, "get_macro_news",
+        brief.data_client,
+        "get_macro_news",
         lambda *a, **k: [{"title": "Markets rally", "publisher": "X", "link": "http://x"}],
     )
     mkt = brief.fetch_market_overview()
@@ -274,8 +316,10 @@ def test_fetch_market_overview_captures_data(monkeypatch):
 def test_market_summary_lines_renders(monkeypatch):
     run = brief.run_brief(tickers=[])
     run.market = {
-        "indices": {"S&P 500": {"close": 101.5, "chg_pct": 1.5},
-                    "NASDAQ": {"close": 2.0, "chg_pct": -0.5}},
+        "indices": {
+            "S&P 500": {"close": 101.5, "chg_pct": 1.5},
+            "NASDAQ": {"close": 2.0, "chg_pct": -0.5},
+        },
         "news": [{"title": "Markets rally", "publisher": "X", "link": ""}],
     }
     lines = brief._market_summary_lines(run)
@@ -293,6 +337,7 @@ def test_market_summary_lines_empty(monkeypatch):
 # ---------------------------------------------------------------------------
 # Rule-based action hints
 # ---------------------------------------------------------------------------
+
 
 def test_recommendation_bullish_no_position():
     s = brief.TickerScore(ticker="MSFT", composite=40.0)
@@ -374,25 +419,52 @@ class _CapClient:
 def _fake_snap():
     return {
         "rows": [
-            {"ticker": "MU.NE", "account": "CAD", "shares": 100, "avg_price": 40.0,
-             "price": 45.0, "day_pct": 2.5, "day_chg_cad": 110.0,
-             "value_cad": 4500.0, "return_pct": 12.5, "return_cad": 500.0},
-            {"ticker": "MSFT.NE", "account": "CAD", "shares": 20, "avg_price": 30.0,
-             "price": 32.0, "day_pct": 1.0, "day_chg_cad": 40.0,
-             "value_cad": 640.0, "return_pct": 6.7, "return_cad": 40.0},
+            {
+                "ticker": "MU.NE",
+                "account": "CAD",
+                "shares": 100,
+                "avg_price": 40.0,
+                "price": 45.0,
+                "day_pct": 2.5,
+                "day_chg_cad": 110.0,
+                "value_cad": 4500.0,
+                "return_pct": 12.5,
+                "return_cad": 500.0,
+            },
+            {
+                "ticker": "MSFT.NE",
+                "account": "CAD",
+                "shares": 20,
+                "avg_price": 30.0,
+                "price": 32.0,
+                "day_pct": 1.0,
+                "day_chg_cad": 40.0,
+                "value_cad": 640.0,
+                "return_pct": 6.7,
+                "return_cad": 40.0,
+            },
         ],
-        "net_worth": 60000.0, "invested": 5140.0, "cash": 54860.0,
-        "cost": 4600.0, "day_chg": 150.0, "day_pct": 3.0,
-        "return_pct": 11.7, "return_cad": 540.0,
-        "all_time_pct": 9.0, "all_time_cad": 5000.0, "fx_usd_cad": 1.36,
+        "net_worth": 60000.0,
+        "invested": 5140.0,
+        "cash": 54860.0,
+        "cost": 4600.0,
+        "day_chg": 150.0,
+        "day_pct": 3.0,
+        "return_pct": 11.7,
+        "return_cad": 540.0,
+        "all_time_pct": 9.0,
+        "all_time_cad": 5000.0,
+        "fx_usd_cad": 1.36,
     }
 
 
 def test_persist_portfolio_snapshot_payloads():
     client = _CapClient()
     from datetime import date, datetime
+
     run = brief.BriefRun(
-        run_date=date(2026, 9, 22), generated_at=datetime(2026, 9, 22, 21, 0),
+        run_date=date(2026, 9, 22),
+        generated_at=datetime(2026, 9, 22, 21, 0),
         weights_used={},
     )
     brief._persist_portfolio_snapshot(
@@ -412,14 +484,12 @@ def test_persist_portfolio_snapshot_payloads():
     assert items[0]["day_change_cad"] == 110.0 and items[0]["value_cad"] == 4500.0
 
     # Stale items pruned so a same-day overwrite never leaves old positions.
-    assert any(
-        "snapshot_id=eq.7&ticker=not.in.(MU.NE,MSFT.NE)" in url
-        for _, url, _ in deletes
-    )
+    assert any("snapshot_id=eq.7&ticker=not.in.(MU.NE,MSFT.NE)" in url for _, url, _ in deletes)
 
 
 def test_upsert_holdings_prunes_sold(monkeypatch, memory_db):
     from src.database import Account, Holding
+
     acc = Account.create(name="CAD", cash=0.0, initial_cash=0.0)
     Holding.create(account=acc, ticker="MU.NE", shares=100, avg_price=40.0)
 
@@ -430,15 +500,15 @@ def test_upsert_holdings_prunes_sold(monkeypatch, memory_db):
             return _CapResp([])
 
         def get(self, url, headers=None):
-            return _CapResp([{"account": "CAD", "ticker": "VINTAGE.TO"},
-                             {"account": "USD"}])
+            return _CapResp([{"account": "CAD", "ticker": "VINTAGE.TO"}, {"account": "USD"}])
 
         def delete(self, url, headers=None):
             deleted_urls.append(url)
             return _CapResp([])
 
-    brief._upsert_portfolio_holdings(Client(), "https://db.example/rest/v1",
-                                     {"apikey": "k"}, _fake_snap())
+    brief._upsert_portfolio_holdings(
+        Client(), "https://db.example/rest/v1", {"apikey": "k"}, _fake_snap()
+    )
     # Keeps MU.NE, prunes the stale VINTAGE.TO (and wipes the empty USD account).
     assert any("not.in.(MU.NE)" in u for u in deleted_urls)
     assert any("account=eq.USD" in u and "not.in" not in u for u in deleted_urls)
@@ -460,8 +530,12 @@ def test_remote_derived_snapshot_rebuilds(monkeypatch):
 
     def fake_get(url, headers=None):
         if "/portfolio_accounts?select=" in url:
-            return Rec([{"account": "CAD", "cash": 5000.0, "initial_cash": 10000.0},
-                        {"account": "USD", "cash": 1000.0, "initial_cash": 2000.0}])
+            return Rec(
+                [
+                    {"account": "CAD", "cash": 5000.0, "initial_cash": 10000.0},
+                    {"account": "USD", "cash": 1000.0, "initial_cash": 2000.0},
+                ]
+            )
         return Rec([{"account": "CAD", "ticker": "MU.NE", "shares": 100, "avg_price": 40.0}])
 
     class FakeClient:
@@ -469,8 +543,9 @@ def test_remote_derived_snapshot_rebuilds(monkeypatch):
             return fake_get(url, headers)
 
     monkeypatch.setattr(b.data_client, "get_usd_to_cad", lambda: 1.35)
-    monkeypatch.setattr(b.data_client, "get_current_prices_batch",
-                        lambda tks: {"MU.NE": (45.0, 43.5)})
+    monkeypatch.setattr(
+        b.data_client, "get_current_prices_batch", lambda tks: {"MU.NE": (45.0, 43.5)}
+    )
     snap = b._remote_derived_snapshot(FakeClient(), "https://db.example/rest/v1", {})
     assert snap is not None
     assert snap["rows"][0]["ticker"] == "MU.NE"
@@ -501,20 +576,37 @@ def test_fetch_remote_portfolio_snapshot_mapping(monkeypatch):
     import sys
     import types
 
-    monkeypatch.setattr(brief, "_supabase_rest_config",
-                        lambda: ("https://db.example/rest/v1", "k"))
+    monkeypatch.setattr(brief, "_supabase_rest_config", lambda: ("https://db.example/rest/v1", "k"))
 
-    snapshots_resp = [{
-        "id": 7, "net_worth_cad": 60000, "invested_cad": 5140,
-        "cash_cad": 54860, "cost_cad": 4600, "day_change_cad": 150,
-        "day_pct": 3.0, "return_pct": 11.7, "return_cad": 540,
-        "all_time_pct": 9.0, "all_time_cad": 5000, "fx_usd_cad": 1.36,
-    }]
+    snapshots_resp = [
+        {
+            "id": 7,
+            "net_worth_cad": 60000,
+            "invested_cad": 5140,
+            "cash_cad": 54860,
+            "cost_cad": 4600,
+            "day_change_cad": 150,
+            "day_pct": 3.0,
+            "return_pct": 11.7,
+            "return_cad": 540,
+            "all_time_pct": 9.0,
+            "all_time_cad": 5000,
+            "fx_usd_cad": 1.36,
+        }
+    ]
     items_resp = [
-        {"ticker": "MU.NE", "account": "CAD", "shares": 100,
-         "avg_price": 40.0, "price": 45.0, "day_change_pct": 2.5,
-         "day_change_cad": 110.0, "value_cad": 4500.0,
-         "return_pct": 12.5, "return_cad": 500.0},
+        {
+            "ticker": "MU.NE",
+            "account": "CAD",
+            "shares": 100,
+            "avg_price": 40.0,
+            "price": 45.0,
+            "day_change_pct": 2.5,
+            "day_change_cad": 110.0,
+            "value_cad": 4500.0,
+            "return_pct": 12.5,
+            "return_cad": 500.0,
+        },
     ]
 
     class CapturingClient:
@@ -567,24 +659,30 @@ def test_remote_derived_snapshot_recovers_missing_cash_baseline(monkeypatch):
     from history instead of reporting the whole net worth as an all-time gain."""
     from src import brief as b
 
-    history = [{"run_date": "2026-09-23", "net_worth_cad": 58288.86,
-                "cash_cad": 27353.03, "all_time_cad": 5324.18}]
+    history = [
+        {
+            "run_date": "2026-09-23",
+            "net_worth_cad": 58288.86,
+            "cash_cad": 27353.03,
+            "all_time_cad": 5324.18,
+        }
+    ]
 
     def fake_get(url, headers=None):
         if "/portfolio_accounts?select=" in url:
             return _rec([])
         if "/portfolio_snapshots?" in url:
             return _rec(history)
-        return _rec([{"account": "CAD", "ticker": "MU.NE",
-                      "shares": 100, "avg_price": 40.0}])
+        return _rec([{"account": "CAD", "ticker": "MU.NE", "shares": 100, "avg_price": 40.0}])
 
     class FakeClient:
         def get(self, url, headers=None):
             return fake_get(url, headers)
 
     monkeypatch.setattr(b.data_client, "get_usd_to_cad", lambda: 1.35)
-    monkeypatch.setattr(b.data_client, "get_current_prices_batch",
-                        lambda tks: {"MU.NE": (45.0, 43.5)})
+    monkeypatch.setattr(
+        b.data_client, "get_current_prices_batch", lambda tks: {"MU.NE": (45.0, 43.5)}
+    )
     snap = b._remote_derived_snapshot(FakeClient(), "https://db.example/rest/v1", {})
     assert snap is not None
     assert snap["cash"] == pytest.approx(27353.03)
@@ -603,16 +701,16 @@ def test_remote_derived_snapshot_all_time_zero_without_baseline(monkeypatch):
             return _rec([{"account": "CAD", "cash": 100.0, "initial_cash": 0.0}])
         if "/portfolio_snapshots?" in url:
             return _rec([])
-        return _rec([{"account": "CAD", "ticker": "MU.NE",
-                      "shares": 100, "avg_price": 40.0}])
+        return _rec([{"account": "CAD", "ticker": "MU.NE", "shares": 100, "avg_price": 40.0}])
 
     class FakeClient:
         def get(self, url, headers=None):
             return fake_get(url, headers)
 
     monkeypatch.setattr(b.data_client, "get_usd_to_cad", lambda: 1.0)
-    monkeypatch.setattr(b.data_client, "get_current_prices_batch",
-                        lambda tks: {"MU.NE": (45.0, 43.5)})
+    monkeypatch.setattr(
+        b.data_client, "get_current_prices_batch", lambda tks: {"MU.NE": (45.0, 43.5)}
+    )
     snap = b._remote_derived_snapshot(FakeClient(), "https://db.example/rest/v1", {})
     assert snap["all_time_cad"] == 0.0
     assert snap["all_time_pct"] == 0.0
@@ -624,18 +722,37 @@ def test_fetch_remote_portfolio_snapshot_skips_baselineless_row(monkeypatch):
     import sys
     import types
 
-    monkeypatch.setattr(brief, "_supabase_rest_config",
-                        lambda: ("https://db.example/rest/v1", "k"))
+    monkeypatch.setattr(brief, "_supabase_rest_config", lambda: ("https://db.example/rest/v1", "k"))
 
     snapshots_resp = [
-        {"id": 12, "net_worth_cad": 30685.39, "invested_cad": 30685.39,
-         "cash_cad": 0.0, "cost_cad": 29121.26, "day_change_cad": 40.0,
-         "day_pct": 0.13, "return_pct": 5.4, "return_cad": 1564.13,
-         "all_time_pct": 0.0, "all_time_cad": 30685.39, "fx_usd_cad": 1.4188},
-        {"id": 15, "net_worth_cad": 58152.63, "invested_cad": 31034.46,
-         "cash_cad": 27118.17, "cost_cad": 29375.27, "day_change_cad": 92.83,
-         "day_pct": 0.30, "return_pct": 5.65, "return_cad": 1659.19,
-         "all_time_pct": 9.75, "all_time_cad": 5168.00, "fx_usd_cad": 1.4198},
+        {
+            "id": 12,
+            "net_worth_cad": 30685.39,
+            "invested_cad": 30685.39,
+            "cash_cad": 0.0,
+            "cost_cad": 29121.26,
+            "day_change_cad": 40.0,
+            "day_pct": 0.13,
+            "return_pct": 5.4,
+            "return_cad": 1564.13,
+            "all_time_pct": 0.0,
+            "all_time_cad": 30685.39,
+            "fx_usd_cad": 1.4188,
+        },
+        {
+            "id": 15,
+            "net_worth_cad": 58152.63,
+            "invested_cad": 31034.46,
+            "cash_cad": 27118.17,
+            "cost_cad": 29375.27,
+            "day_change_cad": 92.83,
+            "day_pct": 0.30,
+            "return_pct": 5.65,
+            "return_cad": 1659.19,
+            "all_time_pct": 9.75,
+            "all_time_cad": 5168.00,
+            "fx_usd_cad": 1.4198,
+        },
     ]
 
     class FakeClient:
@@ -652,17 +769,39 @@ def test_fetch_remote_portfolio_snapshot_skips_baselineless_row(monkeypatch):
             if "/portfolio_snapshots?" in url:
                 return _CapResp(snapshots_resp)
             if "snapshot_id=eq.12" in url:
-                return _CapResp([{"ticker": "MU.NE", "account": "CAD",
-                                  "shares": 29, "avg_price": 38.09,
-                                  "price": 47.05, "day_change_pct": 0.92,
-                                  "day_change_cad": 12.4, "value_cad": 1364.45,
-                                  "return_pct": 23.52, "return_cad": 260.4}])
+                return _CapResp(
+                    [
+                        {
+                            "ticker": "MU.NE",
+                            "account": "CAD",
+                            "shares": 29,
+                            "avg_price": 38.09,
+                            "price": 47.05,
+                            "day_change_pct": 0.92,
+                            "day_change_cad": 12.4,
+                            "value_cad": 1364.45,
+                            "return_pct": 23.52,
+                            "return_cad": 260.4,
+                        }
+                    ]
+                )
             assert "snapshot_id=eq.15&order=value_cad.desc" in url
-            return _CapResp([{"ticker": "KILO-B.TO", "account": "CAD",
-                              "shares": 87, "avg_price": 65.58,
-                              "price": 70.06, "day_change_pct": 0.20,
-                              "day_change_cad": 12.18, "value_cad": 6095.22,
-                              "return_pct": 6.83, "return_cad": 389.76}])
+            return _CapResp(
+                [
+                    {
+                        "ticker": "KILO-B.TO",
+                        "account": "CAD",
+                        "shares": 87,
+                        "avg_price": 65.58,
+                        "price": 70.06,
+                        "day_change_pct": 0.20,
+                        "day_change_cad": 12.18,
+                        "value_cad": 6095.22,
+                        "return_pct": 6.83,
+                        "return_cad": 389.76,
+                    }
+                ]
+            )
 
     fake_httpx = types.ModuleType("httpx")
     fake_httpx.Client = FakeClient

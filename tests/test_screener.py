@@ -41,9 +41,11 @@ class TestFetchUniverse:
             "<tr><td>BRK.B</td><td>Berkshire</td><td>Financials</td></tr>"
             "</table>"
         )
-        with patch("src.screener._http.get") as mock_get, \
-             patch("src.screener.cache_get", return_value=None), \
-             patch("src.screener.cache_set"):
+        with (
+            patch("src.screener._http.get") as mock_get,
+            patch("src.screener.cache_get", return_value=None),
+            patch("src.screener.cache_set"),
+        ):
             mock_get.return_value = MagicMock(text=html)
             result = screener.fetch_universe("sp500")
 
@@ -67,16 +69,42 @@ class TestResolveSymbols:
 class TestScreen:
     def test_filters_net_bullish_and_ranks(self):
         fake = {
-            "AAA": {"current": 100, "target": 150, "strong_buy": 5, "buy": 10, "hold": 2, "sell": 0, "strong_sell": 0},
-            "BBB": {"current": 50, "target": 60, "strong_buy": 0, "buy": 3, "hold": 8, "sell": 2, "strong_sell": 1},
-            "CCC": {"current": 20, "target": 21, "strong_buy": 2, "buy": 5, "hold": 3, "sell": 1, "strong_sell": 0},
+            "AAA": {
+                "current": 100,
+                "target": 150,
+                "strong_buy": 5,
+                "buy": 10,
+                "hold": 2,
+                "sell": 0,
+                "strong_sell": 0,
+            },
+            "BBB": {
+                "current": 50,
+                "target": 60,
+                "strong_buy": 0,
+                "buy": 3,
+                "hold": 8,
+                "sell": 2,
+                "strong_sell": 1,
+            },
+            "CCC": {
+                "current": 20,
+                "target": 21,
+                "strong_buy": 2,
+                "buy": 5,
+                "hold": 3,
+                "sell": 1,
+                "strong_sell": 0,
+            },
             "DDD": None,
         }
-        with patch(
-            "src.screener.fetch_universe",
-            return_value={"AAA": "A Co", "BBB": "B Co", "CCC": "C Co", "DDD": "D Co"},
-        ), patch("src.screener._analyst", side_effect=lambda s: fake[s]), patch(
-            "src.screener._enrich", side_effect=lambda rows, **kw: rows
+        with (
+            patch(
+                "src.screener.fetch_universe",
+                return_value={"AAA": "A Co", "BBB": "B Co", "CCC": "C Co", "DDD": "D Co"},
+            ),
+            patch("src.screener._analyst", side_effect=lambda s: fake[s]),
+            patch("src.screener._enrich", side_effect=lambda rows, **kw: rows),
         ):
             rows = screener.screen(limit=10, min_analysts=2)
 
@@ -89,13 +117,29 @@ class TestScreen:
 
     def test_min_analysts_filter(self):
         fake = {
-            "AAA": {"current": 100, "target": 150, "strong_buy": 0, "buy": 1, "hold": 0, "sell": 0, "strong_sell": 0},
-            "BBB": {"current": 10, "target": 12, "strong_buy": 0, "buy": 1, "hold": 0, "sell": 0, "strong_sell": 0},
+            "AAA": {
+                "current": 100,
+                "target": 150,
+                "strong_buy": 0,
+                "buy": 1,
+                "hold": 0,
+                "sell": 0,
+                "strong_sell": 0,
+            },
+            "BBB": {
+                "current": 10,
+                "target": 12,
+                "strong_buy": 0,
+                "buy": 1,
+                "hold": 0,
+                "sell": 0,
+                "strong_sell": 0,
+            },
         }
-        with patch(
-            "src.screener.fetch_universe", return_value={"AAA": "A Co", "BBB": "B Co"}
-        ), patch("src.screener._analyst", side_effect=lambda s: fake[s]), patch(
-            "src.screener._enrich", side_effect=lambda rows, **kw: rows
+        with (
+            patch("src.screener.fetch_universe", return_value={"AAA": "A Co", "BBB": "B Co"}),
+            patch("src.screener._analyst", side_effect=lambda s: fake[s]),
+            patch("src.screener._enrich", side_effect=lambda rows, **kw: rows),
         ):
             # Only 1 analyst per name — below min_analysts=2, so nothing passes.
             rows = screener.screen(limit=10, min_analysts=2)
@@ -103,13 +147,29 @@ class TestScreen:
 
     def test_no_upside_filtered(self):
         fake = {
-            "AAA": {"current": 100, "target": 90, "strong_buy": 5, "buy": 5, "hold": 0, "sell": 0, "strong_sell": 0},
-            "BBB": {"current": 10, "target": 9, "strong_buy": 5, "buy": 5, "hold": 0, "sell": 0, "strong_sell": 0},
+            "AAA": {
+                "current": 100,
+                "target": 90,
+                "strong_buy": 5,
+                "buy": 5,
+                "hold": 0,
+                "sell": 0,
+                "strong_sell": 0,
+            },
+            "BBB": {
+                "current": 10,
+                "target": 9,
+                "strong_buy": 5,
+                "buy": 5,
+                "hold": 0,
+                "sell": 0,
+                "strong_sell": 0,
+            },
         }
-        with patch(
-            "src.screener.fetch_universe", return_value={"AAA": "A Co", "BBB": "B Co"}
-        ), patch("src.screener._analyst", side_effect=lambda s: fake[s]), patch(
-            "src.screener._enrich", side_effect=lambda rows, **kw: rows
+        with (
+            patch("src.screener.fetch_universe", return_value={"AAA": "A Co", "BBB": "B Co"}),
+            patch("src.screener._analyst", side_effect=lambda s: fake[s]),
+            patch("src.screener._enrich", side_effect=lambda rows, **kw: rows),
         ):
             rows = screener.screen(limit=10, min_analysts=1)
         assert rows == []
@@ -157,15 +217,17 @@ class TestDeepDive:
         ]
 
     def test_fallback_when_gemini_down(self):
-        with patch("src.screener.data_client.get_ticker_news_batch", return_value={}), patch(
-            "src.advisor._gemini_generate", return_value=None
+        with (
+            patch("src.screener.data_client.get_ticker_news_batch", return_value={}),
+            patch("src.advisor._gemini_generate", return_value=None),
         ):
             result = screener.deep_dive(self._picks(), top=3)
         assert "unavailable" in result
 
     def test_returns_narrative(self):
-        with patch("src.screener.data_client.get_ticker_news_batch", return_value={}), patch(
-            "src.advisor._gemini_generate", return_value="**MU** — buy note here."
+        with (
+            patch("src.screener.data_client.get_ticker_news_batch", return_value={}),
+            patch("src.advisor._gemini_generate", return_value="**MU** — buy note here."),
         ):
             result = screener.deep_dive(self._picks(), top=3)
         assert "**MU**" in result
@@ -302,7 +364,7 @@ class TestFundamentalsNormalization:
         info = {
             "longName": "Test Co",
             "marketCap": 1e12,
-            "freeCashflow": 3e9,       # broken single-quarter figure
+            "freeCashflow": 3e9,  # broken single-quarter figure
             "operatingCashflow": 196e9,
             "profitMargins": 0.41,
         }
@@ -391,8 +453,15 @@ class TestCompositeRanking:
     def test_quality_beats_stale_high_upside(self):
         quality = _row("QUAL", upside=0.08, fund=GOOD_FUND, tech=GOOD_TECH)
         junk = _row(
-            "JUNK", upside=0.60, fund=WEAK_FUND, tech=WEAK_TECH,
-            strong_buy=1, buy=4, hold=5, sell=3, strong_sell=2,
+            "JUNK",
+            upside=0.60,
+            fund=WEAK_FUND,
+            tech=WEAK_TECH,
+            strong_buy=1,
+            buy=4,
+            hold=5,
+            sell=3,
+            strong_sell=2,
         )
         quality = screener._score_row(quality)
         junk = screener._score_row(junk)
@@ -425,26 +494,38 @@ class TestTechnicalSnapshot:
 
 class TestRevisionSnapshot:
     def test_counts_recent_upgrades_and_target_raises(self):
-        rec = pd.DataFrame({
-            "period": ["0m", "-1m", "-2m", "-3m"],
-            "strongBuy": [10, 9, 6, 5],
-            "buy": [20, 20, 18, 18],
-            "hold": [5, 6, 10, 11],
-            "sell": [0, 0, 1, 1],
-            "strongSell": [0, 0, 0, 0],
-        })
-        actions = pd.DataFrame({
-            "Action": ["up", "down", "main", "init"],
-            "priceTargetAction": ["Raises", "Lowers", "Raises", "Maintains"],
-        }, index=pd.to_datetime([
-            "2026-11-01", "2026-10-15", "2026-09-01", "2026-08-01",
-        ]))
+        rec = pd.DataFrame(
+            {
+                "period": ["0m", "-1m", "-2m", "-3m"],
+                "strongBuy": [10, 9, 6, 5],
+                "buy": [20, 20, 18, 18],
+                "hold": [5, 6, 10, 11],
+                "sell": [0, 0, 1, 1],
+                "strongSell": [0, 0, 0, 0],
+            }
+        )
+        actions = pd.DataFrame(
+            {
+                "Action": ["up", "down", "main", "init"],
+                "priceTargetAction": ["Raises", "Lowers", "Raises", "Maintains"],
+            },
+            index=pd.to_datetime(
+                [
+                    "2026-11-01",
+                    "2026-10-15",
+                    "2026-09-01",
+                    "2026-08-01",
+                ]
+            ),
+        )
         fake = MagicMock()
         fake.recommendations = rec
         fake.upgrades_downgrades = actions
-        with patch("src.screener.yf.Ticker", return_value=fake), \
-             patch("src.screener.cache_get", return_value=None), \
-             patch("src.screener.cache_set"):
+        with (
+            patch("src.screener.yf.Ticker", return_value=fake),
+            patch("src.screener.cache_get", return_value=None),
+            patch("src.screener.cache_set"),
+        ):
             rev = screener._revision_snapshot("TEST")
 
         assert rev["net_upgrades"] == 0  # one up, one down in the 90-day window
@@ -457,14 +538,24 @@ class TestScreenMultiFactor:
     def test_investigation_changes_the_ranking(self):
         analyst = {
             "QUAL": {
-                "current": 100, "target": 108, "strong_buy": 10, "buy": 15,
-                "hold": 2, "sell": 0, "strong_sell": 0,
+                "current": 100,
+                "target": 108,
+                "strong_buy": 10,
+                "buy": 15,
+                "hold": 2,
+                "sell": 0,
+                "strong_sell": 0,
             },
             # JUNK still passes the cheap net-bullish filter — it is only the
             # fundamental/technical investigation that reveals the problem.
             "JUNK": {
-                "current": 100, "target": 160, "strong_buy": 2, "buy": 9,
-                "hold": 5, "sell": 1, "strong_sell": 0,
+                "current": 100,
+                "target": 160,
+                "strong_buy": 2,
+                "buy": 9,
+                "hold": 5,
+                "sell": 1,
+                "strong_sell": 0,
             },
         }
 
@@ -481,15 +572,27 @@ class TestScreenMultiFactor:
                 out.append(r)
             return out
 
-        with patch("src.screener.fetch_universe", return_value={"QUAL": "Quality Co", "JUNK": "Junk Co"}), \
-             patch("src.screener._analyst", side_effect=lambda s: analyst[s]), \
-             patch("src.screener._enrich", side_effect=enrich):
+        with (
+            patch(
+                "src.screener.fetch_universe",
+                return_value={"QUAL": "Quality Co", "JUNK": "Junk Co"},
+            ),
+            patch("src.screener._analyst", side_effect=lambda s: analyst[s]),
+            patch("src.screener._enrich", side_effect=enrich),
+        ):
             rows = screener.screen(limit=2, min_analysts=2)
 
         assert [r["symbol"] for r in rows] == ["QUAL", "JUNK"]
         assert rows[0]["score"] > rows[1]["score"]
         assert rows[0]["verdict"] in ("Buy", "Strong Buy")
-        for key in ("analyst_score", "quality_score", "valuation_score", "growth_score", "momentum_score", "tags"):
+        for key in (
+            "analyst_score",
+            "quality_score",
+            "valuation_score",
+            "growth_score",
+            "momentum_score",
+            "tags",
+        ):
             assert key in rows[0]
 
 
@@ -539,14 +642,32 @@ class _CapClient:
 def _picks():
     return [
         {
-            "symbol": "MSFT", "company": "Microsoft", "sector": "Technology",
-            "current": 400.0, "target": 450.0, "upside": 0.125, "score": 78.0,
-            "verdict": "Strong Buy", "tags": ["Quality"], "score_reasons": ["Strong ROE"],
-            "risk_flags": [], "analyst_score": 80, "quality_score": 90,
-            "valuation_score": 60, "growth_score": 70, "momentum_score": 55,
-            "underrated_score": 72, "strong_buy": 10, "buy": 20, "hold": 3,
-            "sell": 0, "strong_sell": 0, "total": 33,
-            "data_coverage": 0.9, "risk_penalty": 0.0, "revisions": {},
+            "symbol": "MSFT",
+            "company": "Microsoft",
+            "sector": "Technology",
+            "current": 400.0,
+            "target": 450.0,
+            "upside": 0.125,
+            "score": 78.0,
+            "verdict": "Strong Buy",
+            "tags": ["Quality"],
+            "score_reasons": ["Strong ROE"],
+            "risk_flags": [],
+            "analyst_score": 80,
+            "quality_score": 90,
+            "valuation_score": 60,
+            "growth_score": 70,
+            "momentum_score": 55,
+            "underrated_score": 72,
+            "strong_buy": 10,
+            "buy": 20,
+            "hold": 3,
+            "sell": 0,
+            "strong_sell": 0,
+            "total": 33,
+            "data_coverage": 0.9,
+            "risk_penalty": 0.0,
+            "revisions": {},
         }
     ]
 
@@ -558,19 +679,29 @@ def test_persist_screen_upserts_run_and_picks(monkeypatch):
     monkeypatch.setattr(screener.httpx, "Client", lambda *a, **k: client)
 
     ok = screener.persist_screen(
-        _picks(), run_date="2026-11-16", universe="sp500", limit=10,
-        min_analysts=3, narrative="AI case",
+        _picks(),
+        run_date="2026-11-16",
+        universe="sp500",
+        limit=10,
+        min_analysts=3,
+        narrative="AI case",
     )
 
     assert ok is True
-    run_post = next(c for c in client.calls if c[0] == "post" and c[1].endswith(
-        "/top_buys_runs?on_conflict=run_date"))
+    run_post = next(
+        c
+        for c in client.calls
+        if c[0] == "post" and c[1].endswith("/top_buys_runs?on_conflict=run_date")
+    )
     assert run_post[2]["run_date"] == "2026-11-16"
     assert run_post[2]["picks_count"] == 1
     assert run_post[2]["narrative"] == "AI case"
 
-    picks_post = next(c for c in client.calls if c[0] == "post" and c[1].endswith(
-        "/top_buys_picks?on_conflict=run_id,symbol"))
+    picks_post = next(
+        c
+        for c in client.calls
+        if c[0] == "post" and c[1].endswith("/top_buys_picks?on_conflict=run_id,symbol")
+    )
     assert picks_post[2][0]["run_id"] == 42
     assert picks_post[2][0]["rank"] == 1
     assert picks_post[2][0]["symbol"] == "MSFT"

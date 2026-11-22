@@ -108,9 +108,7 @@ def main():
                 continue
             name, _ = commands[idx]
             _show_help(name)
-            args = _ask(
-                f"Arguments for [green]{name}[/green] (empty = no args)"
-            )
+            args = _ask(f"Arguments for [green]{name}[/green] (empty = no args)")
             if args is None:
                 break
             argv = [name] + shlex.split(args)

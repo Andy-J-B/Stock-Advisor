@@ -23,6 +23,7 @@ def sharpe_ratio(daily_returns: list[float], risk_free_rate: float = 0.04) -> fl
         return 0.0
     try:
         import numpy as np
+
         arr = np.array(daily_returns)
         excess = arr - (risk_free_rate / 252.0)
         if arr.std(ddof=1) == 0:
@@ -30,6 +31,7 @@ def sharpe_ratio(daily_returns: list[float], risk_free_rate: float = 0.04) -> fl
         return float((excess.mean() / arr.std(ddof=1)) * np.sqrt(252))
     except Exception:
         import statistics
+
         if len(daily_returns) < 2:
             return 0.0
         mean = statistics.mean(daily_returns) - (risk_free_rate / 252.0)
@@ -47,6 +49,7 @@ def sortino_ratio(daily_returns: list[float], risk_free_rate: float = 0.04) -> f
         return 0.0
     try:
         import numpy as np
+
         arr = np.array(daily_returns)
         excess = arr - (risk_free_rate / 252.0)
         downside = arr[arr < 0]
@@ -83,7 +86,9 @@ def time_weighted_return(equity_curve: list[tuple[date, float]]) -> float:
     return (v1 - v0) / v0
 
 
-def money_weighted_return_simple(cash_flows: list[tuple[date, float]], values: list[tuple[date, float]]) -> float:
+def money_weighted_return_simple(
+    cash_flows: list[tuple[date, float]], values: list[tuple[date, float]]
+) -> float:
     # Simplified approximation - proper IRR would need solver
     if not cash_flows or not values:
         return 0.0

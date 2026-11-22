@@ -122,9 +122,7 @@ def detect_anomalies(
         raise ValueError(f"Unknown anomaly method: {method!r}")
 
 
-def summarize_anomalies(
-    anomalies: pd.DataFrame, ticker: str
-) -> str | None:
+def summarize_anomalies(anomalies: pd.DataFrame, ticker: str) -> str | None:
     """Return a human-readable summary string for a single ticker's anomalies.
 
     Returns None if no anomalies were found.

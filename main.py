@@ -11,7 +11,7 @@ from rich.markdown import Markdown
 from rich.prompt import Confirm
 from src import setup, portfolio, advisor, config, data_client, __version__
 from src import risk, indicators, optimizer, features, ml_model, anomaly, ticker_map
-from src import screener, brief, newsletter
+from src import screener, brief, newsletter, market_leaders
 from src.database import (
     get_watchlist,
     add_to_watchlist,
@@ -1086,7 +1086,7 @@ def top_buys(
     deep: bool = typer.Option(
         True,
         "--deep/--no-deep",
-        help='Generate an AI deep-dive that challenges the screen and builds an investment case.',
+        help="Generate an AI deep-dive that challenges the screen and builds an investment case.",
     ),
     persist: bool = typer.Option(
         False,
@@ -1104,7 +1104,9 @@ def top_buys(
     # Ensure the local cache tables exist on a fresh runner before screening.
     init_db()
 
-    with console.status("[bold green]Fetching universe and analyst coverage...[/bold green]"):
+    with console.status(
+        "[bold green]Fetching universe and analyst coverage...[/bold green]"
+    ):
         try:
             picks = screener.screen(
                 universe=universe,
@@ -1210,7 +1212,9 @@ def top_buys(
 
     if persist:
         label = "custom" if tickers else universe
-        with console.status("[bold green]Persisting top buys to Supabase...[/bold green]"):
+        with console.status(
+            "[bold green]Persisting top buys to Supabase...[/bold green]"
+        ):
             ok = screener.persist_screen(
                 picks,
                 universe=label,
@@ -1225,6 +1229,167 @@ def top_buys(
                 "[red]Failed to persist top buys — check DATABASE_REST_URL, "
                 "SUPABASE_PUBLISHABLE_KEY and the sql/supabase_brief.sql schema.[/red]"
             )
+
+
+# ---------------------------------------------------------------------------
+# 1) Add to the imports at the top of main.py:
+#       from src import screener, brief, newsletter, market_leaders
+#
+# 2) Paste this command anywhere below the other @app.command() blocks
+#    (e.g. right before `def tui()`).
+# ---------------------------------------------------------------------------
+
+
+def _fmt_cap(v: float) -> str:
+    if not v:
+        return "-"
+    for unit, div in (("T", 1e12), ("B", 1e9), ("M", 1e6)):
+        if v >= div:
+            return f"${v / div:,.1f}{unit}"
+    return f"${v:,.0f}"
+
+
+def _fmt_num(v, digits: int = 1) -> str:
+    return f"{v:.{digits}f}" if isinstance(v, (int, float)) and v else "-"
+
+
+@app.command("stock-status")
+def stock_status(
+    us: int = typer.Option(15, "--us", help="How many top US companies by market cap."),
+    ca: int = typer.Option(
+        5, "--ca", help="How many top Canadian companies by market cap."
+    ),
+    tickers: str = typer.Option(
+        None,
+        "--tickers",
+        "-t",
+        help="Custom comma-separated tickers instead of the top lists.",
+    ),
+    sort: str = typer.Option(
+        "mcap",
+        "--sort",
+        "-s",
+        help="Sort by: mcap, ath (furthest below ATH first), upside, day.",
+    ),
+):
+    """Top market-cap companies: price, all-time high, distance from ATH, analyst opinions."""
+    init_db()
+    custom = tickers.replace(" ", ",").split(",") if tickers else None
+
+    with console.status(
+        "[bold green]Ranking market leaders and pulling data...[/bold green]"
+    ):
+        groups = market_leaders.get_market_leaders(us_n=us, ca_n=ca, custom=custom)
+
+    sort_keys = {
+        "mcap": (lambda r: r["market_cap"], True),
+        "ath": (
+            lambda r: r["from_ath_pct"] if r["from_ath_pct"] is not None else 0,
+            False,
+        ),
+        "upside": (
+            lambda r: r["upside_pct"] if r["upside_pct"] is not None else -999,
+            True,
+        ),
+        "day": (lambda r: r["day_pct"], True),
+    }
+    key_fn, reverse = sort_keys.get(sort, sort_keys["mcap"])
+
+    for name, rows in groups.items():
+        if not rows:
+            console.print(f"[yellow]No data for {name}.[/yellow]")
+            continue
+        rows = sorted(rows, key=key_fn, reverse=reverse)
+
+        t = Table(
+            title=f"[bold]{name} — Market & All-Time High[/bold]",
+            border_style="bright_cyan",
+        )
+        for col, kw in [
+            ("#", {"justify": "right", "style": "dim"}),
+            ("Symbol", {"style": "bold cyan"}),
+            ("Company", {"max_width": 22}),
+            ("Cur", {}),
+            ("Price", {"justify": "right"}),
+            ("Day", {"justify": "right"}),
+            ("Mkt Cap", {"justify": "right"}),
+            ("P/E", {"justify": "right"}),
+            ("Fwd P/E", {"justify": "right"}),
+            ("Div %", {"justify": "right"}),
+            ("52w Range", {"justify": "right"}),
+            ("All-Time High", {"justify": "right"}),
+            ("ATH Date", {}),
+            ("From ATH", {"justify": "right"}),
+        ]:
+            t.add_column(col, **kw)
+
+        for i, r in enumerate(rows, 1):
+            dc = _price_color(r["day_pct"])
+            fa = r["from_ath_pct"]
+            if fa is None:
+                fa_str = "-"
+            else:
+                fa_color = "green" if fa > -5 else "yellow" if fa > -20 else "red"
+                fa_str = f"[{fa_color}]{fa:+.1f}%[/{fa_color}]"
+            lo, hi = r.get("low_52w"), r.get("high_52w")
+            t.add_row(
+                str(i),
+                r["symbol"],
+                r["company"],
+                r["currency"],
+                f"${r['price']:,.2f}",
+                f"[{dc}]{r['day_pct']:+.2f}%[/{dc}]",
+                _fmt_cap(r["market_cap"]),
+                _fmt_num(r["pe"]),
+                _fmt_num(r["fwd_pe"]),
+                _fmt_num(r["div_yield"], 2),
+                f"{lo:,.0f}–{hi:,.0f}" if lo and hi else "-",
+                f"${r['ath']:,.2f}" if r["ath"] else "-",
+                r["ath_date"] or "-",
+                fa_str,
+            )
+        console.print(t)
+
+        a = Table(
+            title=f"[bold]{name} — Analyst Opinions[/bold]",
+            border_style="bright_magenta",
+        )
+        a.add_column("#", justify="right", style="dim")
+        a.add_column("Symbol", style="bold cyan")
+        a.add_column("Strong Buy", justify="right", style="bold green")
+        a.add_column("Buy", justify="right", style="green")
+        a.add_column("Hold", justify="right", style="yellow")
+        a.add_column("Sell", justify="right", style="red")
+        a.add_column("Strong Sell", justify="right", style="bold red")
+        a.add_column("Total", justify="right", style="dim")
+        a.add_column("Consensus", justify="center")
+        a.add_column("Mean Target", justify="right")
+        a.add_column("Upside", justify="right")
+
+        for i, r in enumerate(rows, 1):
+            b = r["analysts"]
+            label, color = market_leaders.consensus_label(b)
+            up = r["upside_pct"]
+            up_color = _price_color(up) if up is not None else "dim"
+            a.add_row(
+                str(i),
+                r["symbol"],
+                str(b["strong_buy"]),
+                str(b["buy"]),
+                str(b["hold"]),
+                str(b["sell"]),
+                str(b["strong_sell"]),
+                str(b["total"]),
+                f"[{color}]{label}[/{color}]",
+                f"${r['target']:,.2f}" if r["target"] else "-",
+                f"[{up_color}]{up:+.1f}%[/{up_color}]" if up is not None else "-",
+            )
+        console.print(a)
+
+    console.print(
+        "\n[dim]ATH = highest intraday price on record (split-adjusted, not dividend-adjusted). "
+        "Market caps and prices for .TO tickers are in CAD. Analyst data is best-effort from Yahoo Finance.[/dim]"
+    )
 
 
 @app.command()

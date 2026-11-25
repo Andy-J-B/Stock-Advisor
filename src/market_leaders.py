@@ -424,6 +424,10 @@ def fetch_snapshot(run_date: date | str | None = None) -> dict[str, Any] | None:
     """
     rest_url, api_key = _status_rest_config()
     if not rest_url or not api_key:
+        log.warning(
+            "DATABASE_REST_URL / SUPABASE_PUBLISHABLE_KEY not set — "
+            "skipping stock-status fetch."
+        )
         return None
 
     if isinstance(run_date, date):
@@ -455,6 +459,10 @@ def fetch_snapshot(run_date: date | str | None = None) -> dict[str, Any] | None:
                 resp.raise_for_status()
                 rows = resp.json()
             if not rows:
+                log.warning(
+                    "No stock-status snapshot has been persisted yet — "
+                    "run `python main.py stock-status --persist` first."
+                )
                 return None
 
             run = rows[0]

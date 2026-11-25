@@ -303,6 +303,8 @@ sends if either enrichment job fails). (`.gitlab-ci.yml` provides the same jobs
 for running it on GitLab schedules instead.) Add the API keys +
 `DATABASE_URL`/`DATABASE_REST_URL`/`SUPABASE_PUBLISHABLE_KEY`/
 `NOTIFY_WEBHOOK_URL` as repo Actions secrets (or GitLab project CI/CD variables).
+Run `sql/supabase_brief.sql` once before the first nightly run so the enrichment
+jobs can persist to the `top_buys_*` and `stock_status_*` tables.
 
 ### Daily newsletter (email)
 

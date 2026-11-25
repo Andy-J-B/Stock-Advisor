@@ -1352,6 +1352,7 @@ def stock_status(
                 "[red]Failed to persist stock status — check DATABASE_REST_URL, "
                 "SUPABASE_PUBLISHABLE_KEY and the sql/supabase_brief.sql schema.[/red]"
             )
+            raise typer.Exit(code=1)
 
 
 @app.command()

@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime
+from typing import Any
 
+import httpx
 import yfinance as yf
 
 from src.database import cache_get, cache_set
@@ -238,3 +241,232 @@ def get_market_leaders(
             rows = list(pool.map(build_status, tickers))
         out[name] = sorted(rows, key=lambda r: r["market_cap"], reverse=True)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Persistence to Supabase (market-leaders / stock-status history)
+# ---------------------------------------------------------------------------
+
+_SUPABASE_TABLE_STATUS_RUNS = "stock_status_runs"
+_SUPABASE_TABLE_STATUS_ROWS = "stock_status_rows"
+
+
+def _status_rest_config() -> tuple[str, str]:
+    """Return (rest_url, api_key) for Supabase REST, or ('', '')."""
+    import os
+
+    rest_url = os.getenv("DATABASE_REST_URL", "")
+    api_key = os.getenv(
+        "SUPABASE_PUBLISHABLE_KEY", os.getenv("SUPABASE_ANON_KEY", "")
+    )
+    return rest_url, api_key
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert numpy/pandas scalars into plain JSON-serializable values."""
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    if hasattr(value, "item") and not isinstance(value, (str, bytes)):
+        try:
+            return value.item()
+        except Exception:
+            return value
+    return value
+
+
+def _status_payload(
+    row: dict[str, Any], run_id: Any, group_name: str, rank: int
+) -> dict[str, Any]:
+    """Flatten one market-leader status into a `stock_status_rows` row."""
+    analysts = row.get("analysts") or {}
+    consensus, _ = consensus_label(analysts)
+    return _json_safe({
+        "run_id": run_id,
+        "group_name": group_name,
+        "rank": rank,
+        "symbol": row.get("symbol"),
+        "company": row.get("company") or None,
+        "currency": row.get("currency") or None,
+        "price": row.get("price"),
+        "day_pct": row.get("day_pct"),
+        "market_cap": row.get("market_cap"),
+        "pe": row.get("pe"),
+        "fwd_pe": row.get("fwd_pe"),
+        "div_yield": row.get("div_yield"),
+        "high_52w": row.get("high_52w"),
+        "low_52w": row.get("low_52w"),
+        "ath": row.get("ath"),
+        "ath_date": row.get("ath_date"),
+        "from_ath_pct": row.get("from_ath_pct"),
+        "target": row.get("target"),
+        "upside_pct": row.get("upside_pct"),
+        "strong_buy": analysts.get("strong_buy"),
+        "buy": analysts.get("buy"),
+        "hold": analysts.get("hold"),
+        "sell": analysts.get("sell"),
+        "strong_sell": analysts.get("strong_sell"),
+        "total_analysts": analysts.get("total"),
+        "consensus": consensus,
+    })
+
+
+def persist_snapshot(
+    groups: dict[str, list[dict[str, Any]]],
+    run_date: date | str | None = None,
+    us_n: int = 15,
+    ca_n: int = 5,
+    custom: list[str] | None = None,
+    sort: str = "mcap",
+) -> bool:
+    """Upsert a market-leaders snapshot (run + status rows) into Supabase.
+
+    Requires ``DATABASE_REST_URL`` and a Supabase API key.  The run is keyed on
+    ``run_date`` so a same-day re-run overwrites it, and its rows are replaced
+    so stale names never linger.  Returns True on success.
+    """
+    if not groups or not any(groups.values()):
+        log.warning("No market-leader rows to persist — skipping stock-status persist.")
+        return False
+
+    rest_url, api_key = _status_rest_config()
+    if not rest_url or not api_key:
+        log.warning(
+            "DATABASE_REST_URL / SUPABASE_PUBLISHABLE_KEY not set — "
+            "skipping stock-status persist."
+        )
+        return False
+
+    if isinstance(run_date, str):
+        run_date = date.fromisoformat(run_date)
+    run_date = run_date or date.today()
+    generated_at = datetime.now().astimezone()
+
+    payloads: list[dict[str, Any]] = []
+    rows_by_group = {name: rows for name, rows in groups.items() if rows}
+    total = sum(len(rows) for rows in rows_by_group.values())
+    run_payload = _json_safe({
+        "run_date": run_date.isoformat(),
+        "generated_at": generated_at.isoformat(),
+        "universe": "custom" if custom else ", ".join(rows_by_group),
+        "sort": sort,
+        "us_count": us_n if not custom else 0,
+        "ca_count": ca_n if not custom else 0,
+        "total_count": total,
+        "groups": list(rows_by_group),
+    })
+
+    headers = {
+        "apikey": api_key,
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates",
+    }
+
+    try:
+        with httpx.Client(timeout=30) as client:
+            resp = client.post(
+                f"{rest_url}/{_SUPABASE_TABLE_STATUS_RUNS}?on_conflict=run_date",
+                json=run_payload,
+                headers={
+                    **headers,
+                    "Prefer": "resolution=merge-duplicates,return=representation",
+                },
+            )
+            resp.raise_for_status()
+            rows = resp.json()
+            run_id = rows[0]["id"] if rows else None
+            if run_id is None:
+                log.error("Could not determine stock-status run_id from Supabase response.")
+                return False
+
+            # Replace the run's rows so a shrinking list cannot leave stale names.
+            try:
+                resp = client.delete(
+                    f"{rest_url}/{_SUPABASE_TABLE_STATUS_ROWS}?run_id=eq.{run_id}",
+                    headers={"apikey": api_key},
+                )
+                resp.raise_for_status()
+            except Exception as exc:
+                log.warning("Could not clear previous stock-status rows: %s", exc)
+
+            for group_name, group_rows in rows_by_group.items():
+                for rank, row in enumerate(group_rows, start=1):
+                    payloads.append(
+                        _status_payload(row, run_id, group_name, rank)
+                    )
+            for i in range(0, len(payloads), 50):
+                resp = client.post(
+                    f"{rest_url}/{_SUPABASE_TABLE_STATUS_ROWS}"
+                    "?on_conflict=run_id,group_name,symbol",
+                    json=payloads[i : i + 50],
+                    headers=headers,
+                )
+                resp.raise_for_status()
+
+        log.info(
+            "Persisted stock-status snapshot (id=%s) for %s with %d rows.",
+            run_id, run_date, len(payloads),
+        )
+        return True
+    except Exception as exc:
+        log.error("Failed to persist stock-status snapshot: %s", exc)
+        return False
+
+
+def fetch_snapshot(run_date: date | str | None = None) -> dict[str, Any] | None:
+    """Load a persisted market-leaders snapshot (run + rows) from Supabase.
+
+    Returns None when REST is unconfigured, nothing has been persisted yet, or
+    the request fails.  With *run_date* the exact day is preferred, falling
+    back to the most recent run so the newsletter/dashboard always show
+    something useful.
+    """
+    rest_url, api_key = _status_rest_config()
+    if not rest_url or not api_key:
+        return None
+
+    if isinstance(run_date, date):
+        run_date = run_date.isoformat()
+
+    headers = {"apikey": api_key, "Accept": "application/json"}
+    try:
+        with httpx.Client(timeout=20) as client:
+            rows: list[dict[str, Any]] = []
+            if run_date:
+                resp = client.get(
+                    f"{rest_url}/{_SUPABASE_TABLE_STATUS_RUNS}"
+                    f"?select=*&run_date=eq.{run_date}&limit=1",
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                rows = resp.json()
+                if not rows:
+                    log.warning(
+                        "No stock-status snapshot persisted for %s — using latest.",
+                        run_date,
+                    )
+            if not rows:
+                resp = client.get(
+                    f"{rest_url}/{_SUPABASE_TABLE_STATUS_RUNS}"
+                    "?select=*&order=run_date.desc&limit=1",
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                rows = resp.json()
+            if not rows:
+                return None
+
+            run = rows[0]
+            resp = client.get(
+                f"{rest_url}/{_SUPABASE_TABLE_STATUS_ROWS}"
+                f"?select=*&run_id=eq.{run['id']}&order=group_name.asc,rank.asc",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            status_rows = resp.json()
+
+        return {"run": run, "rows": status_rows}
+    except Exception as exc:
+        log.warning("Could not fetch stock-status snapshot from Supabase: %s", exc)
+        return None

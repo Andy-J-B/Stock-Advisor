@@ -57,6 +57,7 @@ Without `GEMINI_API_KEY`, commands fall back to locally-computed analysis.
 | `portfolio-news`     | Per-ticker news sentiment with headline-level FinBERT breakdown                                           |
 | `research TICKER`    | Deep-dive analyst report on a single ticker via Gemini                                                    |
 | `top-buys`           | Multi-factor buy screen (analysts, quality, valuation, growth, momentum, risk) + AI investment case      |
+| `stock-status`       | Market leaders by market cap (US + Canada): price, all-time high, distance from ATH, analyst opinions      |
 
 ### Portfolio Management
 
@@ -143,6 +144,28 @@ python main.py top-buys --universe sp500,tsx60 --pool-size 80
 python main.py top-buys --limit 10 --persist
 ```
 
+## How `stock-status` Works
+
+`stock-status` snapshots the largest US and Canadian companies by live market
+cap, then reports where each one trades relative to its all-time high and what
+sell-side analysts currently think. Candidate lists are re-ranked by live market
+cap at runtime, so names drift in and out automatically.
+
+```bash
+python main.py stock-status                       # top 15 US + 5 Canada
+python main.py stock-status --us 20 --ca 10
+python main.py stock-status --tickers MSFT,NVDA,RY.TO
+python main.py stock-status --sort ath            # furthest below ATH first
+
+# persist the snapshot so the nightly email and dashboard can use it
+python main.py stock-status --us 15 --ca 5 --persist
+```
+
+Columns include price, day change, market cap, trailing/forward P/E, dividend
+yield, 52-week range, all-time high + date, distance from ATH, analyst rating
+counts, consensus and mean target upside. ATH uses split-adjusted intraday highs
+(not dividend-adjusted), so it matches what charting sites display.
+
 ## Architecture
 
 ```
@@ -175,6 +198,7 @@ Stock-Advisor/
     ├── ml_model.py         # LightGBM classifier (walk-forward CV, auto-retrain)
     ├── anomaly.py          # Isolation Forest + GMM anomaly detection
     ├── screener.py         # Multi-factor stock screener (top-buys)
+    ├── market_leaders.py   # Market-cap leaders + ATH distance + analyst opinions (stock-status)
     ├── newsletter.py       # Daily HTML email (render, SMTP, preview)
     └── brief.py            # Composite conviction scoring + market snapshot (nightly brief)
 ```
@@ -261,18 +285,24 @@ python main.py brief-weights --sentiment 0.30 --ml 0.30
    - `top_buys_runs` — one row per `run_date` (universe, weights, pick count, AI narrative)
    - `top_buys_picks` — one ranked row per finalist (price, target, upside, score,
      verdict, pillar scores, analyst breakdown, tags, score drivers, risk flags)
-5. `python main.py brief --notify` posts the score summary **plus the market recap** to your webhook.
+5. `python main.py stock-status --persist` upserts the market-leaders snapshot into:
+   - `stock_status_runs` — one row per `run_date` (universe, sort, counts, group names)
+   - `stock_status_rows` — one ranked row per company per group (price, day change,
+     market cap, P/E, dividend yield, 52-week range, ATH + date, distance from ATH,
+     target, upside, analyst counts, consensus)
+6. `python main.py brief --notify` posts the score summary **plus the market recap** to your webhook.
 
 ### Automated nightly runs
 
 `.github/workflows/nightly-brief.yml` runs `brief --persist --notify` on a cron
 (weekdays 21:53 UTC = 14:53 PDT, after US close) and posts a failure alert to
 your webhook. A follow-up `top-buys` job runs `python main.py top-buys --limit
-10 --persist`, and the `newsletter` job runs after both (it still sends if the
-screen job fails). (`.gitlab-ci.yml` provides the same jobs for running it on GitLab
-schedules instead.) Add the API keys + `DATABASE_URL`/`DATABASE_REST_URL`/
-`SUPABASE_PUBLISHABLE_KEY`/`NOTIFY_WEBHOOK_URL` as repo Actions secrets (or GitLab
-project CI/CD variables).
+10 --persist`, a `stock-status` job runs `python main.py stock-status --us 15
+--ca 5 --persist`, and the `newsletter` job runs after all of them (it still
+sends if either enrichment job fails). (`.gitlab-ci.yml` provides the same jobs
+for running it on GitLab schedules instead.) Add the API keys +
+`DATABASE_URL`/`DATABASE_REST_URL`/`SUPABASE_PUBLISHABLE_KEY`/
+`NOTIFY_WEBHOOK_URL` as repo Actions secrets (or GitLab project CI/CD variables).
 
 ### Daily newsletter (email)
 
@@ -291,6 +321,12 @@ HTML digest and emails it via Gmail SMTP (stdlib `smtplib`, no extra deps):
   (average score/upside, Strong Buy count) and the AI investment case. Loaded
   from the `top_buys_runs` / `top_buys_picks` tables written by the nightly
   `top-buys` job; omitted gracefully when no screen is available.
+- **Market Leaders — Stock Status** (bottom section) — the persisted snapshot of
+  the largest US/Canadian companies: price, day change, distance from the
+  all-time high, market cap, analyst consensus, upside, plus summary stats
+  (average distance from ATH/upside, Strong Buy count) grouped by market. Loaded
+  from the `stock_status_runs` / `stock_status_rows` tables written by the
+  nightly `stock-status` job; omitted gracefully when no snapshot is available.
 
 ```bash
 python main.py newsletter                 # build + send
@@ -324,6 +360,7 @@ The dashboard is a pure read-only viewer over the Postgres history tables
 - Score distribution histogram and a Biggest Movers panel for the selected day
 - Per-ticker history line chart (composite + all 4 components over time), plus a component breakdown area chart
 - **Top Buys** tab: the selected day's multi-factor screen — summary metrics, score bar chart, ranked table (pillar scores, upside, coverage, risk penalty), expandable score drivers/risk flags, and the AI investment case. Falls back to the latest saved screen when the selected date has none.
+- **Stock Status** tab: the selected day's market-leaders snapshot — summary metrics (names, average distance from ATH/upside, Strong Buy count), group filter, distance-from-ATH bar chart, ranked table (market cap, P/E, 52-week range, ATH, consensus, upside), and expandable analyst breakdowns. Falls back to the latest saved snapshot when the selected date has none.
 - Expandable per-ticker details panel: top headline, analyst breakdown, signal agreement, anomaly detail, action suggestion, and full reasoning
 
 ## Key Subsystems

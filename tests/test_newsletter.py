@@ -151,6 +151,32 @@ def _fake_top_buys() -> dict:
     }
 
 
+def _fake_stock_status() -> dict:
+    return {
+        "run": {"run_date": "2026-09-14", "universe": "US, Canada"},
+        "rows": [
+            {
+                "group_name": "US", "rank": 1, "symbol": "NVDA",
+                "company": "NVIDIA", "currency": "USD", "price": 180.0,
+                "day_pct": 2.5, "market_cap": 4.4e12, "from_ath_pct": -8.0,
+                "upside_pct": 25.0, "consensus": "Strong Buy",
+            },
+            {
+                "group_name": "US", "rank": 2, "symbol": "MSFT",
+                "company": "Microsoft", "currency": "USD", "price": 400.0,
+                "day_pct": 0.4, "market_cap": 3.0e12, "from_ath_pct": -12.5,
+                "upside_pct": 12.0, "consensus": "Buy",
+            },
+            {
+                "group_name": "Canada", "rank": 1, "symbol": "RY.TO",
+                "company": "Royal Bank", "currency": "CAD", "price": 180.0,
+                "day_pct": -0.3, "market_cap": 2.5e11, "from_ath_pct": -4.0,
+                "upside_pct": 8.0, "consensus": "Hold",
+            },
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Bucketing + rendering
 # ---------------------------------------------------------------------------
@@ -207,6 +233,26 @@ def test_render_email_includes_top_buys_section():
 def test_render_email_omits_top_buys_when_empty():
     html = newsletter.render_email(_fake_run(), _fake_snapshot(), _fake_funds())
     assert "Top Buys — Multi-Factor Screen" not in html
+
+
+def test_render_email_includes_stock_status_section():
+    html = newsletter.render_email(
+        _fake_run(), _fake_snapshot(), _fake_funds(),
+        stock_status=_fake_stock_status(),
+    )
+    assert "Market Leaders — Stock Status" in html
+    assert "Avg From ATH" in html and "-8%" in html
+    assert "Avg Upside" in html and "+15%" in html
+    assert "NVDA" in html and "RY.TO" in html
+    assert "$4.4T" in html
+    assert "Strong Buy" in html
+    assert "Canada" in html
+    assert "highest intraday price on record" in html
+
+
+def test_render_email_omits_stock_status_when_empty():
+    html = newsletter.render_email(_fake_run(), _fake_snapshot(), _fake_funds())
+    assert "Market Leaders — Stock Status" not in html
 
 
 def test_exec_summary_rules_fallback(monkeypatch):
@@ -361,6 +407,9 @@ def test_run_newsletter_preview(monkeypatch, tmp_path):
     monkeypatch.setattr(newsletter.data_client, "get_ticker_info", lambda t: {})
     monkeypatch.setattr(newsletter.data_client, "get_ticker_news_batch", lambda t, limit=3: {})
     monkeypatch.setattr(newsletter.screener, "fetch_screen", lambda run_date=None: None)
+    monkeypatch.setattr(
+        newsletter.market_leaders, "fetch_snapshot", lambda run_date=None: None
+    )
     monkeypatch.chdir(tmp_path)
 
     ok = newsletter.run_newsletter(send=False)

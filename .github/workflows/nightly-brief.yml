@@ -86,9 +86,50 @@ jobs:
         env:
           NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
 
+  stock-status:
+    needs: brief
+    runs-on: ubuntu-latest
+    # Optional enrichment: a failed snapshot must not block the newsletter.
+    continue-on-error: true
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run market-leaders stock status
+        run: python main.py stock-status --us 15 --ca 5 --persist
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}
+          DATABASE_REST_URL: ${{ secrets.SUPABASE_REST_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -d '{"content":"Stock-status snapshot failed — check Actions log (newsletter will still send)"}' \
+            "$NOTIFY_WEBHOOK_URL" || true
+        env:
+          NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
+
   newsletter:
-    needs: [brief, top-buys]
-    # Still send the email if the optional top-buys screen failed.
+    needs: [brief, top-buys, stock-status]
+    # Still send the email if the optional enrichment jobs failed.
     if: ${{ !cancelled() && needs.brief.result == 'success' }}
     runs-on: ubuntu-latest
 

@@ -384,3 +384,72 @@ create policy "allow update" on top_buys_picks
     for update using (true) with check (true);
 create policy "allow delete" on top_buys_picks
     for delete using (true);
+
+-- ---------------------------------------------------------------------------
+-- Market-leaders / stock-status history (written by `main.py stock-status --persist`)
+-- ---------------------------------------------------------------------------
+
+create table if not exists stock_status_runs (
+    id            bigserial primary key,
+    run_date      date not null unique,
+    generated_at  timestamptz not null default now(),
+    universe      text,
+    sort          text,
+    us_count      integer default 0,
+    ca_count      integer default 0,
+    total_count   integer default 0,
+    groups        jsonb not null default '[]'::jsonb
+);
+
+create table if not exists stock_status_rows (
+    id             bigserial primary key,
+    run_id         bigint not null references stock_status_runs(id) on delete cascade,
+    group_name     text not null,
+    rank           integer not null,
+    symbol         text not null,
+    company        text,
+    currency       text,
+    price          numeric,
+    day_pct        numeric,
+    market_cap     numeric,
+    pe             numeric,
+    fwd_pe         numeric,
+    div_yield      numeric,
+    high_52w       numeric,
+    low_52w        numeric,
+    ath            numeric,
+    ath_date       text,
+    from_ath_pct   numeric,
+    target         numeric,
+    upside_pct     numeric,
+    strong_buy     integer,
+    buy            integer,
+    hold           integer,
+    sell           integer,
+    strong_sell    integer,
+    total_analysts integer,
+    consensus      text,
+    unique (run_id, group_name, symbol)
+);
+create index if not exists idx_stock_status_rows_run on stock_status_rows (run_id, group_name, rank);
+create index if not exists idx_stock_status_rows_symbol on stock_status_rows (symbol);
+
+alter table stock_status_runs enable row level security;
+alter table stock_status_rows enable row level security;
+
+create policy "allow read" on stock_status_runs for select using (true);
+create policy "allow read" on stock_status_rows for select using (true);
+
+create policy "allow write" on stock_status_runs
+    for insert with check (true);
+create policy "allow update" on stock_status_runs
+    for update using (true) with check (true);
+create policy "allow delete" on stock_status_runs
+    for delete using (true);
+
+create policy "allow write" on stock_status_rows
+    for insert with check (true);
+create policy "allow update" on stock_status_rows
+    for update using (true) with check (true);
+create policy "allow delete" on stock_status_rows
+    for delete using (true);

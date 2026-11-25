@@ -80,6 +80,7 @@ tabs = st.tabs(
         "Allocation",
         "Conviction",
         "Top Buys",
+        "Stock Status",
         "Ticker Deep Dive",
     ]
 )
@@ -527,6 +528,137 @@ with tabs[5]:
         )
 
 with tabs[6]:
+    st.header("Stock Status — Market Leaders")
+    try:
+        runs_df = pd.read_sql(
+            text("""
+            SELECT id, run_date, generated_at, universe, sort,
+                   us_count, ca_count, total_count, groups
+            FROM stock_status_runs
+            ORDER BY run_date DESC
+        """),
+            engine,
+        )
+        if runs_df.empty:
+            st.info(
+                "No stock-status snapshots found. Run "
+                "`python main.py stock-status --persist` (or the nightly workflow) first."
+            )
+        else:
+            dates_ss = runs_df["run_date"].astype(str).str[:10]
+            match = runs_df[dates_ss == selected_date_str]
+            row = match.iloc[0] if not match.empty else runs_df.iloc[0]
+            if match.empty:
+                st.caption(
+                    f"No snapshot saved for {selected_date_str} — showing the latest "
+                    f"({str(row['run_date'])[:10]})."
+                )
+
+            rows_df = pd.read_sql(
+                text("""
+                SELECT * FROM stock_status_rows
+                WHERE run_id = :rid
+                ORDER BY group_name, rank
+            """),
+                engine,
+                params={"rid": int(row["id"])},
+            )
+
+            st.caption(
+                f"{row['universe'] or 'market leaders'} · {len(rows_df)} names · "
+                f"generated {str(row['generated_at'])[:16]}"
+            )
+
+            if rows_df.empty:
+                st.info("This run has no rows.")
+            else:
+                ath = rows_df["from_ath_pct"].dropna()
+                upside = rows_df["upside_pct"].dropna()
+                strong = (
+                    rows_df["consensus"].fillna("").str.lower().str.contains("strong").sum()
+                )
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Names", len(rows_df))
+                c2.metric("Avg From ATH", f"{ath.mean():+.1f}%" if len(ath) else "—")
+                c3.metric("Avg Upside", f"{upside.mean():+.1f}%" if len(upside) else "—")
+                c4.metric("Strong Buy", int(strong))
+
+                groups = [g for g in rows_df["group_name"].dropna().unique().tolist()]
+                choice = "All"
+                if len(groups) > 1:
+                    choice = st.selectbox("Group", ["All", *groups])
+                view = rows_df if choice == "All" else rows_df[rows_df["group_name"] == choice]
+
+                fig = px.bar(
+                    view.sort_values("from_ath_pct", ascending=False),
+                    x="from_ath_pct",
+                    y="symbol",
+                    orientation="h",
+                    color="from_ath_pct",
+                    color_continuous_scale=["red", "yellow", "green"],
+                    title="Distance From All-Time High (%)",
+                    hover_data=["company", "consensus", "upside_pct", "market_cap"],
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                show = view.rename(
+                    columns={
+                        "group_name": "Group",
+                        "rank": "#",
+                        "symbol": "Ticker",
+                        "company": "Company",
+                        "currency": "Cur",
+                        "price": "Price",
+                        "day_pct": "Day %",
+                        "market_cap": "Mkt Cap",
+                        "pe": "P/E",
+                        "fwd_pe": "Fwd P/E",
+                        "div_yield": "Div %",
+                        "from_ath_pct": "From ATH",
+                        "target": "Target",
+                        "upside_pct": "Upside",
+                        "consensus": "Consensus",
+                        "total_analysts": "Analysts",
+                    }
+                )
+                cols = [
+                    "Group", "#", "Ticker", "Company", "Cur", "Price", "Day %",
+                    "Mkt Cap", "P/E", "Fwd P/E", "Div %", "From ATH", "Target",
+                    "Upside", "Consensus", "Analysts",
+                ]
+                st.dataframe(
+                    show[[c for c in cols if c in show.columns]],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                with st.expander("Analyst breakdown & all-time high"):
+                    for _, p in view.iterrows():
+                        target = p.get("target")
+                        ath_price = p.get("ath")
+                        target_txt = f"${float(target):,.2f}" if pd.notna(target) else "—"
+                        ath_txt = f"${float(ath_price):,.2f}" if pd.notna(ath_price) else "—"
+                        st.markdown(
+                            f"**{p['symbol']}** — {p.get('consensus') or 'N/A'} · "
+                            f"{int(p.get('total_analysts') or 0)} analysts · "
+                            f"target {target_txt}"
+                        )
+                        st.markdown(
+                            "Strong Buy "
+                            f"{int(p.get('strong_buy') or 0)} · Buy "
+                            f"{int(p.get('buy') or 0)} · Hold "
+                            f"{int(p.get('hold') or 0)} · Sell "
+                            f"{int(p.get('sell') or 0)} · Strong Sell "
+                            f"{int(p.get('strong_sell') or 0)} · ATH "
+                            f"{ath_txt} ({p.get('ath_date') or '—'})"
+                        )
+    except Exception as e:
+        st.info(
+            f"Stock-status data unavailable: {e}. Run `sql/supabase_brief.sql` to "
+            "create the `stock_status_runs` / `stock_status_rows` tables."
+        )
+
+with tabs[7]:
     st.header("Ticker Deep Dive")
     try:
         day_df = pd.read_sql(

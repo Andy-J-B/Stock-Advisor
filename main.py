@@ -1208,6 +1208,12 @@ def stock_status(
         "-s",
         help="Sort by: mcap, ath (furthest below ATH first), upside, day.",
     ),
+    persist: bool = typer.Option(
+        False,
+        "--persist",
+        "-p",
+        help="Persist the snapshot to Supabase (requires DATABASE_REST_URL + SUPABASE_PUBLISHABLE_KEY).",
+    ),
 ):
     """Top market-cap companies: price, all-time high, distance from ATH, analyst opinions."""
     init_db()
@@ -1230,11 +1236,13 @@ def stock_status(
     }
     key_fn, reverse = sort_keys.get(sort, sort_keys["mcap"])
 
+    sorted_groups: dict[str, list[dict]] = {}
     for name, rows in groups.items():
         if not rows:
             console.print(f"[yellow]No data for {name}.[/yellow]")
             continue
         rows = sorted(rows, key=key_fn, reverse=reverse)
+        sorted_groups[name] = rows
 
         t = Table(
             title=f"[bold]{name} — Market & All-Time High[/bold]",
@@ -1325,6 +1333,25 @@ def stock_status(
         "\n[dim]ATH = highest intraday price on record (split-adjusted, not dividend-adjusted). "
         "Market caps and prices for .TO tickers are in CAD. Analyst data is best-effort from Yahoo Finance.[/dim]"
     )
+
+    if persist:
+        with console.status(
+            "[bold green]Persisting stock status to Supabase...[/bold green]"
+        ):
+            ok = market_leaders.persist_snapshot(
+                sorted_groups,
+                us_n=us,
+                ca_n=ca,
+                custom=custom,
+                sort=sort,
+            )
+        if ok:
+            console.print("[green]Stock status persisted to Supabase.[/green]")
+        else:
+            console.print(
+                "[red]Failed to persist stock status — check DATABASE_REST_URL, "
+                "SUPABASE_PUBLISHABLE_KEY and the sql/supabase_brief.sql schema.[/red]"
+            )
 
 
 @app.command()

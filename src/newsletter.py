@@ -26,7 +26,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr, formatdate
 
-from src import brief, data_client, portfolio, screener
+from src import brief, data_client, portfolio, screener, market_leaders
 
 DEFAULT_RECIPIENT = "080.abae@gmail.com"
 
@@ -330,6 +330,7 @@ def render_email(
     funds: dict,
     company_news: dict | None = None,
     top_buys: dict | None = None,
+    stock_status: dict | None = None,
 ) -> str:
     """Build the full HTML newsletter body (table layout, email-client safe)."""
     mkt = run.market or {}
@@ -598,6 +599,10 @@ def render_email(
     if top_buys and top_buys.get("picks"):
         h.append(_top_buys_section(top_buys))
 
+    # ---- Market leaders / stock status ----
+    if stock_status and stock_status.get("rows"):
+        h.append(_stock_status_section(stock_status))
+
     # ---- Footer ----
     ts = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M (%Z)").replace(" ()", "")
     prefs = html_escape.escape(_env("EMAIL_TO", DEFAULT_RECIPIENT))
@@ -805,6 +810,131 @@ def _top_buys_section(screen: dict) -> str:
     return "".join(out)
 
 
+# ---------------------------------------------------------------------------
+# Market leaders / stock status section
+# ---------------------------------------------------------------------------
+
+
+def _cap_str(value) -> str:
+    """Compact market cap ($2.5T / $340.1B / $12.0M)."""
+    try:
+        value = float(value or 0)
+    except (TypeError, ValueError):
+        return "—"
+    if value <= 0:
+        return "—"
+    for unit, div in (("T", 1e12), ("B", 1e9), ("M", 1e6)):
+        if value >= div:
+            return f"${value / div:,.1f}{unit}"
+    return f"${value:,.0f}"
+
+
+def _stock_status_section(status: dict) -> str:
+    """Render the persisted market-leader snapshot at the bottom of the email."""
+    run = status.get("run") or {}
+    rows = status.get("rows") or []
+    if not rows:
+        return ""
+
+    grouped: dict[str, list[dict]] = {}
+    for r in rows:
+        grouped.setdefault(str(r.get("group_name") or "Market Leaders"), []).append(r)
+
+    from_ath = [
+        float(r["from_ath_pct"])
+        for r in rows
+        if r.get("from_ath_pct") is not None
+    ]
+    upsides = [
+        float(r["upside_pct"]) for r in rows if r.get("upside_pct") is not None
+    ]
+    avg_from_ath = sum(from_ath) / len(from_ath) if from_ath else None
+    avg_upside = sum(upsides) / len(upsides) if upsides else None
+    strong = sum(
+        1 for r in rows if "strong" in str(r.get("consensus") or "").lower()
+    )
+    run_date = str(run.get("run_date") or "")[:10]
+    universe = str(run.get("universe") or ", ".join(grouped) or "market leaders")
+
+    out = [
+        '<tr><td class="sec" style="padding:24px 34px 26px;'
+        'border-top:1px solid #EEF0F3;">'
+        '<div class="sec-t" style="font-size:11px;font-weight:700;'
+        'letter-spacing:1.5px;text-transform:uppercase;color:#0052FF;">'
+        "Market Leaders — Stock Status</div>"
+        f'<div class="ds" style="font-size:13px;margin-top:6px;">'
+        f"{html_escape.escape(universe)} · {len(rows)} names"
+        f"{f' · {html_escape.escape(run_date)}' if run_date else ''} · "
+        "top market caps, distance from the all-time high and analyst "
+        "consensus</div>"
+    ]
+
+    # Stats strip
+    stats = [
+        ("Names", str(len(rows))),
+        (
+            "Avg From ATH",
+            f"{avg_from_ath:+.0f}%" if avg_from_ath is not None else "—",
+        ),
+        ("Avg Upside", f"{avg_upside:+.0f}%" if avg_upside is not None else "—"),
+        ("Strong Buy", str(strong)),
+    ]
+    out.append(
+        '<table role="presentation" cellspacing="0" cellpadding="0" border="0" '
+        'width="100%" style="margin-top:12px;"><tr>'
+    )
+    for i, (label, value) in enumerate(stats):
+        style = "padding:2px 0 2px 18px;border-left:1px solid #EEF0F3;"
+        if i == 0:
+            style = "padding:2px 0;"
+        out.append(
+            f'<td style="{style}">'
+            f'<div class="ds" style="font-size:10px;font-weight:600;'
+            f'text-transform:uppercase;letter-spacing:.3px;">{label}</div>'
+            f'<div class="di" style="font-size:16px;font-weight:700;'
+            f'margin-top:3px;">{value}</div></td>'
+        )
+    out.append("</tr></table>")
+
+    for group_name, group_rows in grouped.items():
+        out.append(
+            '<div class="ds" style="font-size:11px;font-weight:700;'
+            'text-transform:uppercase;letter-spacing:.8px;margin:18px 0 4px;">'
+            f"{html_escape.escape(group_name)}</div>"
+            '<table role="presentation" cellspacing="0" cellpadding="0" '
+            'border="0" width="100%" class="tbl">'
+            f"{_thead(['#', 'Ticker', 'Price', 'Day', 'From ATH', 'Mkt Cap', 'Consensus', 'Upside'], right={2, 3, 4, 5, 7})}"
+        )
+        for i, r in enumerate(group_rows[:15], start=1):
+            fa = r.get("from_ath_pct")
+            up = r.get("upside_pct")
+            out.append(
+                _trow(
+                    [
+                        f'<span class="dm">{i}</span>',
+                        _ticker_cell(r.get("symbol") or ""),
+                        _money(r["price"]) if r.get("price") else "—",
+                        _chg(float(r.get("day_pct") or 0), pct=True),
+                        _chg(float(fa), pct=True, digits=1) if fa is not None else "—",
+                        _cap_str(r.get("market_cap")),
+                        _rec_pill(r.get("consensus")),
+                        _chg(float(up), pct=True, digits=1) if up is not None else "—",
+                    ],
+                    right={2, 3, 4, 5, 7},
+                )
+            )
+        out.append("</table>")
+
+    out.append(
+        '<div class="ds" style="font-size:11px;margin-top:12px;color:#9AA0A6;">'
+        "ATH is the highest intraday price on record (split-adjusted, not "
+        "dividend-adjusted). Market caps and prices for .TO tickers are in CAD. "
+        "Analyst data is best-effort from Yahoo Finance.</div>"
+    )
+    out.append("</td></tr>")
+    return "".join(out)
+
+
 def _fund_table_flat(funds: dict) -> str:
     names = list(funds)
     rows = [
@@ -892,8 +1022,16 @@ def run_newsletter(send: bool = True, preview: bool = False) -> bool:
     held = [s.ticker for s in run.scores if s.portfolio_weight and s.portfolio_weight > 0]
     company_news = data_client.get_ticker_news_batch(held, limit=3)
     top_buys = screener.fetch_screen(run_date=run.run_date)
+    stock_status = market_leaders.fetch_snapshot(run_date=run.run_date)
 
-    body = render_email(run, snap, funds, company_news, top_buys=top_buys)
+    body = render_email(
+        run,
+        snap,
+        funds,
+        company_news,
+        top_buys=top_buys,
+        stock_status=stock_status,
+    )
 
     if not send or not is_smtp_configured():
         path = save_preview(body)

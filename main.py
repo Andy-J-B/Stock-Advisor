@@ -1170,15 +1170,6 @@ def top_buys(
             )
 
 
-# ---------------------------------------------------------------------------
-# 1) Add to the imports at the top of main.py:
-#       from src import screener, brief, newsletter, market_leaders
-#
-# 2) Paste this command anywhere below the other @app.command() blocks
-#    (e.g. right before `def tui()`).
-# ---------------------------------------------------------------------------
-
-
 def _fmt_cap(v: float) -> str:
     if not v:
         return "-"
@@ -1353,14 +1344,6 @@ def stock_status(
                 "SUPABASE_PUBLISHABLE_KEY and the sql/supabase_brief.sql schema.[/red]"
             )
             raise typer.Exit(code=1)
-
-
-@app.command()
-def tui():
-    """Launch the Textual Terminal UI dashboard."""
-    from tui import StockDashboard
-
-    StockDashboard().run()
 
 
 # ---------------------------------------------------------------------------

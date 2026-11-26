@@ -89,7 +89,6 @@ Without `GEMINI_API_KEY`, commands fall back to locally-computed analysis.
 | ----------- | -------------------------------------------------------------------------- |
 | `settings`  | View/update risk allocation (conservative/moderate/aggressive percentages) |
 | `rebalance` | Suggest rebalancing trades to match target allocation                      |
-| `tui`       | Launch Textual terminal dashboard (holdings + net worth chart + AI report) |
 
 ## How `top-buys` Works
 
@@ -172,7 +171,7 @@ counts, consensus and mean target upside. ATH uses split-adjusted intraday highs
 Stock-Advisor/
 ├── main.py                 # Typer CLI entry point (20+ commands)
 ├── launcher.py             # Interactive command menu
-├── tui.py                  # Textual dashboard (holdings table + chart)
+├── dashboard.py            # Streamlit history dashboard (reads Supabase)
 ├── requirements.txt
 ├── .env                    # API keys (git-ignored)
 ├── data/                   # Runtime state (git-ignored)
@@ -408,7 +407,8 @@ Fetches S&P 500 / TSX 60 constituents from Wikipedia (cached 7d), narrows the un
 | Component              | Library                                             |
 | ---------------------- | --------------------------------------------------- |
 | CLI                    | Typer 0.25.0                                        |
-| Terminal UI            | Rich 15.0.0, Textual 8.2.4                          |
+| Terminal output        | Rich 15.0.0                                         |
+| History dashboard      | Streamlit 1.63.0, Plotly 6.9.0                      |
 | Database               | Peewee 4.0.5 (SQLite)                               |
 | Market Data            | yfinance 1.3.0, Alpha Vantage, FMP, Finnhub         |
 | Technical Indicators   | Pure pandas                                         |

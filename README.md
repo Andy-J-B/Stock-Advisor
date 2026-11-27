@@ -370,6 +370,8 @@ The dashboard is a pure read-only viewer over the Postgres history tables
 
 SQLite database (`data/portfolio.db`) stores holdings, settings, and a generic cache with TTLs (prices: 5min, news: 1h, fundamentals: 24h, ticker maps: 30d). Parallel fetching via `ThreadPoolExecutor`. FX conversion uses a free exchange-rate API.
 
+> **Planned schema evolution:** [`DB_SCHEMA_MIGRATION.md`](DB_SCHEMA_MIGRATION.md) specifies a lot-level, append-only ledger so every individual purchase, sale, dividend and cash movement is recorded with its date and FX rate. It is a design document for implementation, not the current schema.
+
 ### Canadian Ticker Handling
 
 Portfolios support Canadian-listed securities (CDRs `.NE`, TSX `.TO`). `ticker_map.py` resolves them to US equivalents (`VISA.NE` to `V`, `BRK.TO` to `BRK-B`) using a static map, suffix stripping, and yfinance exchange validation. Unresolved tickers fall back to related market news (`KILO-B.TO` to `GLD`, `VFV.TO` to `SPY`).
